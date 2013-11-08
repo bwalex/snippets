@@ -306,8 +306,9 @@ buffer_cache_write(struct buffer_cache_ctx *ctx, const void *data, size_t count)
 	 * mutex and grab an empty buffer if one is available - otherwise
 	 * wait until we are told that there is.
 	 */
-	if (buf->bytes_left < count) {
-		_drain_current(ctx);
+	if ((buf == NULL) || (buf->bytes_left < count)) {
+		if (buf != NULL)
+			_drain_current(ctx);
 
 		pthread_mutex_lock(&ctx->empty_mtx);
 
@@ -338,6 +339,14 @@ buffer_cache_write(struct buffer_cache_ctx *ctx, const void *data, size_t count)
 	return 0;
 }
 
+int
+buffer_cache_drain(struct buffer_cache_ctx *ctx)
+{
+	if (ctx->current_wr != NULL)
+		_drain_current(ctx);
+
+	return 0;
+}
 
 void
 buffer_cache_destroy(struct buffer_cache_ctx *ctx)

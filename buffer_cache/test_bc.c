@@ -23,6 +23,9 @@ main(int argc, char *argv[]) {
 		memcpy(buf, &i, sizeof(i));
 		r = buffer_cache_write(bc, buf, sizeof(buf));
 		assert (r == 0);
+
+		if ((i % 1024) == 0)
+			buffer_cache_drain(bc);
 	}
 
 	buffer_cache_destroy(bc);
