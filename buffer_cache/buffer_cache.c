@@ -38,7 +38,12 @@
 #include <pthread.h>
 #include <assert.h>
 
+#include "lz4/lz4.h"
+#include "lz4/xxhash.h"
 #include "buffer_cache.h"
+
+#define LZ4_EXTRA_SZ	64*1024
+#define LZ4_BLOCK_SZ	4*1024*1024
 
 struct bc_buffer {
 	struct bc_buffer *next;
@@ -50,6 +55,16 @@ struct bc_buffer {
 	unsigned char *bufp;
 
 	unsigned char buf[0];
+};
+
+struct lz4_state {
+	int		hdr_written;
+	int		first;
+	int		stream_checksum;
+	void		*lz4_state;
+	void		*xxh32_state;
+	unsigned char	lz4_link_buf[LZ4_EXTRA_SZ];
+	unsigned char   lz4_obuf[LZ4_COMPRESSBOUND(LZ4_BLOCK_SZ)+4];
 };
 
 struct buffer_cache_ctx {
@@ -64,6 +79,9 @@ struct buffer_cache_ctx {
 	struct bc_buffer *drain_tail;
 	struct bc_buffer *current_wr;
 
+	int		use_lz4;
+	struct lz4_state lz4_state;
+
 	int		thr_created;
 	int		exit_drain;
 	pthread_t	io_thread;
@@ -72,6 +90,138 @@ struct buffer_cache_ctx {
 	pthread_mutex_t	drain_mtx;
 	pthread_mutex_t	empty_mtx;
 };
+
+static
+int
+lz4write_hdr(struct buffer_cache_ctx *ctx)
+{
+	struct lz4_state *lz4_ctx = &ctx->lz4_state;
+	ssize_t ssz_written;
+	unsigned char buf[19];
+	unsigned int magic = 0x184D2204;
+	int hdr_sz = 0;
+
+	memset(buf, 0, sizeof(buf));
+	memcpy(&buf[0], &magic, sizeof(magic));
+	hdr_sz += sizeof(magic);
+	buf[hdr_sz++] = (0x1 << 6) | (lz4_ctx->stream_checksum << 2); // FLG:{VER, stream checksum}
+	buf[hdr_sz++] = (0x7 << 4); // BD:{4MB blocks}
+	buf[hdr_sz++] = (XXH32(&buf[4], 2, 0) >> 8) & 0xFF; // HC
+
+	ssz_written = write(ctx->fd, buf, (size_t)hdr_sz);
+	if (ssz_written == (ssize_t)hdr_sz) {
+		lz4_ctx->hdr_written = 1;
+		return 0;
+	} else {
+		return 1;
+	}
+}
+
+static
+int
+lz4write_tail(struct buffer_cache_ctx *ctx)
+{
+	struct lz4_state *lz4_ctx = &ctx->lz4_state;
+	unsigned int eos = 0;
+	unsigned int cksum;
+	ssize_t ssz_written;
+
+	/* Write End-of-Stream marker */
+	ssz_written = write(ctx->fd, &eos, 4);
+	if (ssz_written != 4)
+		return 1;
+
+	/* Write stream checksum, if enabled */
+	if (lz4_ctx->stream_checksum) {
+		cksum = XXH32_digest(lz4_ctx->xxh32_state);
+		ssz_written = write(ctx->fd, &cksum, 4);
+		if (ssz_written != 4)
+			return 1;
+	}
+
+	return 0;
+}
+
+static
+int
+lz4write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
+{
+	struct lz4_state *lz4_ctx = &ctx->lz4_state;
+	ssize_t ssz_written;
+	size_t sz_consumed;
+	size_t sz_left;
+	unsigned int in_sz, out_sz;
+	unsigned char *bufp;
+	unsigned int sz_val;
+	int r;
+
+	if (!lz4_ctx->first) {
+		/*
+		 * XXX: revisit whenever the LZ4 streaming API understands separate
+		 * input blocks...
+		 */
+	} else {
+		lz4_ctx->first = 0;
+	}
+
+	sz_left = buf->bytes_used;
+	buf->bufp = buf->buf + LZ4_EXTRA_SZ;
+	while (sz_left > 0) {
+		in_sz = (sz_left < LZ4_BLOCK_SZ) ? (int)sz_left : LZ4_BLOCK_SZ;
+
+		if (lz4_ctx->stream_checksum)
+			XXH32_update(lz4_ctx->xxh32_state, buf->bufp, in_sz);
+
+		/*
+		 * (Try to) compress into obuf+4, keeping the first 4 bytes for
+		 * size information.
+		 */
+		out_sz = LZ4_compress_limitedOutput(buf->bufp, lz4_ctx->lz4_obuf+4,
+		    in_sz, in_sz-1);
+
+		/* XXX: all things lz4 assume little endian */
+		if (out_sz > 0) {
+			/* Block compressed fine */
+
+			/* Copy the compressed block size into the output buffer */
+			memcpy(lz4_ctx->lz4_obuf, &out_sz, 4);
+			out_sz += 4;
+
+			/* Write the compressed block, prefixed with the block size */
+			bufp = lz4_ctx->lz4_obuf;
+			while (out_sz > 0) {
+				ssz_written = write(ctx->fd, bufp, (size_t)out_sz);
+				assert (ssz_written >= 0);
+				bufp += ssz_written;
+				out_sz -= (int)ssz_written;
+			}
+		} else {
+			/* Couldn't compress */
+
+			/* First, write the size, with the "uncompressed" flag */
+			sz_val = in_sz | 0x80000000;
+			ssz_written = write(ctx->fd, &sz_val, 4);
+			assert (ssz_written == 4);
+
+			/* Now, write the uncompressed input block */
+			bufp = buf->bufp;
+			while (in_sz > 0) {
+				ssz_written = write(ctx->fd, bufp, (size_t)in_sz);
+				assert (ssz_written >= 0);
+				bufp += ssz_written;
+				in_sz -= (int)ssz_written;
+			}
+
+			/* Restore in_sz */
+			in_sz = (sz_left < LZ4_BLOCK_SZ) ? (int)sz_left : LZ4_BLOCK_SZ;
+		}
+
+		buf->bufp += in_sz;
+		sz_left -= (size_t)in_sz;
+	}
+
+	return 0;
+}
 
 static
 void *
@@ -129,16 +279,21 @@ _drain_thr(void *priv)
 		 */
 		pthread_mutex_unlock(&ctx->drain_mtx);
 
-
 		/*
 		 * Do the actual I/O: drain the buffer we picked from
 		 * the drain list, ideally in buffer-sized chunks.
 		 */
-		sz_left = buf->bytes_used;
-		while (sz_left > 0) {
-			ssz_written = write(ctx->fd, buf->buf, sz_left);
-			assert (ssz_written >= 0);
-			sz_left -= (size_t)ssz_written;
+		if (ctx->use_lz4) {
+			assert (lz4write_buf(ctx, buf) == 0);
+		} else {
+			sz_left = buf->bytes_used;
+			buf->bufp = buf->buf + LZ4_EXTRA_SZ;
+			while (sz_left > 0) {
+				ssz_written = write(ctx->fd, buf->bufp, sz_left);
+				assert (ssz_written >= 0);
+				buf->bufp += ssz_written;
+				sz_left -= (size_t)ssz_written;
+			}
 		}
 
 
@@ -153,7 +308,7 @@ _drain_thr(void *priv)
 
 		buf->bytes_left = ctx->buffer_size;
 		buf->bytes_used = 0;
-		buf->bufp = buf->buf;
+		buf->bufp = buf->buf + LZ4_EXTRA_SZ;
 		buf->prev = NULL;
 		buf->next = ctx->empty;
 		ctx->empty = buf;
@@ -191,6 +346,8 @@ buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt)
 
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->fd = -1;
+	ctx->use_lz4 = 1;
+	ctx->lz4_state.stream_checksum = 1;
 
 	pthread_cond_init(&ctx->empty_cv, NULL);
 	pthread_cond_init(&ctx->drain_cv, NULL);
@@ -210,6 +367,16 @@ buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt)
 		return NULL;
 	}
 
+	if (ctx->use_lz4) {
+		ctx->lz4_state.first = 1;
+		ctx->lz4_state.xxh32_state = XXH32_init(0);
+		if ((r = lz4write_hdr(ctx)) != 0) {
+			fprintf(stderr, "Failed to write LZ4 header");
+			buffer_cache_destroy(ctx);
+			return NULL;
+		}
+	}
+
 	ctx->buffer_size = buffer_size_b;
 	ctx->buffer_cnt = buffer_cnt;
 
@@ -218,14 +385,14 @@ buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt)
 	 * on the empty list.
 	 */
 	for (i = 0; i < buffer_cnt; i++) {
-		if ((buf = malloc(sizeof(*buf) + buffer_size_b)) == NULL) {
+		if ((buf = malloc(sizeof(*buf) + buffer_size_b + LZ4_EXTRA_SZ)) == NULL) {
 			fprintf(stderr, "Failed to allocate %ju bytes for buffer %ju\n", sizeof(*buf) + buffer_size_b, i);
 			buffer_cache_destroy(ctx);
 			return NULL;
 		}
 
-		memset(buf, 0, sizeof(*buf) + buffer_size_b);
-		buf->bufp = buf->buf;
+		memset(buf, 0, sizeof(*buf) + buffer_size_b + LZ4_EXTRA_SZ);
+		buf->bufp = buf->buf + LZ4_EXTRA_SZ;
 		buf->bytes_left = buffer_size_b;
 		buf->bytes_used = 0;
 		buf->prev = NULL;
@@ -389,8 +556,11 @@ buffer_cache_destroy(struct buffer_cache_ctx *ctx)
 	pthread_mutex_destroy(&ctx->drain_mtx);
 	pthread_mutex_destroy(&ctx->empty_mtx);
 
-	if (ctx->fd >= 0)
+	if (ctx->fd >= 0) {
+		if (ctx->use_lz4 && ctx->lz4_state.hdr_written)
+			lz4write_tail(ctx);
 		close(ctx->fd);
+	}
 
 	if (ctx->file != NULL)
 		free(ctx->file);
