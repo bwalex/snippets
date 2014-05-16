@@ -29,7 +29,12 @@
 
 struct buffer_cache_ctx;
 
-struct buffer_cache_ctx *buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt);
+#define BC_COMP_NONE	0x00
+#define BC_COMP_LZ4	0x01
+#define BC_COMP_ZLIB	0x02
+
+struct buffer_cache_ctx *buffer_cache_init(const char *file, int compress,
+    size_t buffer_size_mb, size_t buffer_cnt);
 int buffer_cache_write(struct buffer_cache_ctx *ctx, const void *data, size_t count);
 int buffer_cache_drain(struct buffer_cache_ctx *ctx);
 void buffer_cache_destroy(struct buffer_cache_ctx *ctx);

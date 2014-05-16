@@ -16,7 +16,7 @@ main(int argc, char *argv[]) {
 	int i, j, r;
 
 	memset(buf, 0, sizeof(buf));
-	bc = buffer_cache_init("bc_test.trace", 32, 4);
+	bc = buffer_cache_init("bc_test.trace", BC_COMP_LZ4, 64, 4);
 	assert (bc != NULL);
 
 	for (i = 0, j = 1024*1024*512; i < 1024*1024*1024; i++, j--) {

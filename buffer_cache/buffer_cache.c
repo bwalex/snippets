@@ -38,12 +38,19 @@
 #include <pthread.h>
 #include <assert.h>
 
+#ifndef _WITHOUT_LZ4
 #include "lz4/lz4.h"
 #include "lz4/xxhash.h"
+#endif
+
+#ifdef _WITH_ZLIB
+#include "zlib.h"
+#endif
 #include "buffer_cache.h"
 
 #define LZ4_EXTRA_SZ	64*1024
 #define LZ4_BLOCK_SZ	4*1024*1024
+#define ZLIB_BLOCK_SZ	LZ4_BLOCK_SZ
 
 struct bc_buffer {
 	struct bc_buffer *next;
@@ -57,6 +64,7 @@ struct bc_buffer {
 	unsigned char buf[0];
 };
 
+#ifndef _WITHOUT_LZ4
 struct lz4_state {
 	int		hdr_written;
 	int		first;
@@ -66,6 +74,17 @@ struct lz4_state {
 	unsigned char	lz4_link_buf[LZ4_EXTRA_SZ];
 	unsigned char   lz4_obuf[LZ4_COMPRESSBOUND(LZ4_BLOCK_SZ)+4];
 };
+#endif
+
+#ifdef _WITH_ZLIB
+struct zlib_state {
+	int		hdr_written;
+	unsigned int	isize;
+	unsigned int	zlib_crc32;
+	z_stream	zlib_strm;
+	unsigned char   zlib_obuf[ZLIB_BLOCK_SZ];
+};
+#endif
 
 struct buffer_cache_ctx {
 	char	*file;
@@ -79,8 +98,16 @@ struct buffer_cache_ctx {
 	struct bc_buffer *drain_tail;
 	struct bc_buffer *current_wr;
 
-	int		use_lz4;
-	struct lz4_state lz4_state;
+	int		compress;
+	union {
+		int	_dummy;
+#ifndef _WITHOUT_LZ4
+		struct lz4_state	lz4_state;
+#endif
+#ifdef _WITH_ZLIB
+		struct zlib_state	zlib_state;
+#endif
+	};
 
 	int		thr_created;
 	int		exit_drain;
@@ -91,9 +118,11 @@ struct buffer_cache_ctx {
 	pthread_mutex_t	empty_mtx;
 };
 
+
+#ifndef _WITHOUT_LZ4
 static
 int
-lz4write_hdr(struct buffer_cache_ctx *ctx)
+lz4_write_hdr(struct buffer_cache_ctx *ctx)
 {
 	struct lz4_state *lz4_ctx = &ctx->lz4_state;
 	ssize_t ssz_written;
@@ -108,6 +137,8 @@ lz4write_hdr(struct buffer_cache_ctx *ctx)
 	buf[hdr_sz++] = (0x7 << 4); // BD:{4MB blocks}
 	buf[hdr_sz++] = (XXH32(&buf[4], 2, 0) >> 8) & 0xFF; // HC
 
+	assert (hdr_sz <= sizeof(buf));
+
 	ssz_written = write(ctx->fd, buf, (size_t)hdr_sz);
 	if (ssz_written == (ssize_t)hdr_sz) {
 		lz4_ctx->hdr_written = 1;
@@ -119,7 +150,7 @@ lz4write_hdr(struct buffer_cache_ctx *ctx)
 
 static
 int
-lz4write_tail(struct buffer_cache_ctx *ctx)
+lz4_write_tail(struct buffer_cache_ctx *ctx)
 {
 	struct lz4_state *lz4_ctx = &ctx->lz4_state;
 	unsigned int eos = 0;
@@ -144,7 +175,7 @@ lz4write_tail(struct buffer_cache_ctx *ctx)
 
 static
 int
-lz4write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
+lz4_write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
 {
 	struct lz4_state *lz4_ctx = &ctx->lz4_state;
 	ssize_t ssz_written;
@@ -222,6 +253,131 @@ lz4write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
 
 	return 0;
 }
+#endif
+
+
+#ifdef _WITH_ZLIB
+static
+int
+zlib_write_hdr(struct buffer_cache_ctx *ctx)
+{
+	struct zlib_state *zlib_ctx = &ctx->zlib_state;
+	ssize_t ssz_written;
+	unsigned char buf[10];
+	int hdr_sz = 0;
+	unsigned int mtime = 0;
+
+	buf[hdr_sz++] = 0x1f; // ID1
+	buf[hdr_sz++] = 0x8b; // ID2
+	buf[hdr_sz++] = 0x08; // CM:{deflate}
+	buf[hdr_sz++] = 0x00; // FLG
+	memcpy(&buf[4], &mtime, 4);
+	hdr_sz += 4;
+	buf[hdr_sz++] = 0x00; // XFL:{used fastest algorithm}
+	buf[hdr_sz++] = 0xff; // OS:{unknown}
+
+	assert (hdr_sz <= sizeof(buf));
+
+	ssz_written = write(ctx->fd, buf, (size_t)hdr_sz);
+	if (ssz_written == (ssize_t)hdr_sz) {
+		zlib_ctx->hdr_written = 1;
+		return 0;
+	} else {
+		return 1;
+	}
+}
+
+static
+int
+zlib_write_tail(struct buffer_cache_ctx *ctx)
+{
+	struct zlib_state *zlib_ctx = &ctx->zlib_state;
+	ssize_t ssz_written;
+	size_t out_sz;
+	unsigned char *bufp;
+	int r;
+
+	/* Finish stream */
+	do {
+		zlib_ctx->zlib_strm.next_out = zlib_ctx->zlib_obuf;
+		zlib_ctx->zlib_strm.avail_out = ZLIB_BLOCK_SZ;
+
+		r = deflate(&zlib_ctx->zlib_strm, Z_FINISH);
+		assert (r != Z_STREAM_ERROR);
+		assert (r != Z_BUF_ERROR);
+
+		out_sz = ZLIB_BLOCK_SZ - zlib_ctx->zlib_strm.avail_out;
+
+		/* Write the compressed output zlib has provided so far */
+		bufp = zlib_ctx->zlib_obuf;
+		while (out_sz > 0) {
+			ssz_written = write(ctx->fd, bufp, out_sz);
+			assert (ssz_written >= 0);
+			bufp += ssz_written;
+			out_sz -= (size_t)ssz_written;
+		}
+
+	} while (r != Z_STREAM_END);
+
+	/* Write checksum */
+	ssz_written = write(ctx->fd, &zlib_ctx->zlib_crc32, 4);
+	if (ssz_written != 4)
+		return 1;
+
+	/* Write isize (length % 2^32) */
+	ssz_written = write(ctx->fd, &zlib_ctx->isize, 4);
+	if (ssz_written != 4)
+		return 1;
+
+	return 0;
+}
+
+static
+int
+zlib_write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
+{
+	struct zlib_state *zlib_ctx = &ctx->zlib_state;
+	ssize_t ssz_written;
+	size_t sz_consumed;
+	size_t sz_left;
+	size_t out_sz;
+	unsigned char *bufp;
+	unsigned int sz_val;
+	int r;
+
+	sz_left = buf->bytes_used;
+	buf->bufp = buf->buf + LZ4_EXTRA_SZ;
+
+	zlib_ctx->zlib_strm.next_in = buf->bufp;
+	zlib_ctx->zlib_strm.avail_in = sz_left;
+
+	zlib_ctx->isize += (unsigned int)sz_left;
+	zlib_ctx->zlib_crc32 = crc32(zlib_ctx->zlib_crc32, buf->bufp, sz_left);
+
+	do {
+		zlib_ctx->zlib_strm.next_out = zlib_ctx->zlib_obuf;
+		zlib_ctx->zlib_strm.avail_out = ZLIB_BLOCK_SZ;
+
+		r = deflate(&zlib_ctx->zlib_strm, Z_NO_FLUSH);
+		assert (r != Z_STREAM_ERROR);
+		assert (r != Z_BUF_ERROR);
+
+		out_sz = ZLIB_BLOCK_SZ - zlib_ctx->zlib_strm.avail_out;
+
+		/* Write the compressed output zlib has provided so far */
+		bufp = zlib_ctx->zlib_obuf;
+		while (out_sz > 0) {
+			ssz_written = write(ctx->fd, bufp, out_sz);
+			assert (ssz_written >= 0);
+			bufp += ssz_written;
+			out_sz -= (size_t)ssz_written;
+		}
+	} while (zlib_ctx->zlib_strm.avail_in);
+
+	return 0;
+}
+#endif
+
 
 static
 void *
@@ -283,9 +439,21 @@ _drain_thr(void *priv)
 		 * Do the actual I/O: drain the buffer we picked from
 		 * the drain list, ideally in buffer-sized chunks.
 		 */
-		if (ctx->use_lz4) {
-			assert (lz4write_buf(ctx, buf) == 0);
-		} else {
+		switch (ctx->compress) {
+#ifndef _WITHOUT_LZ4
+		case BC_COMP_LZ4:
+			assert (lz4_write_buf(ctx, buf) == 0);
+			break;
+#endif
+
+#ifdef _WITH_ZLIB
+		case BC_COMP_ZLIB:
+			assert (zlib_write_buf(ctx, buf) == 0);
+			break;
+#endif
+
+		case BC_COMP_NONE:
+		default:
 			sz_left = buf->bytes_used;
 			buf->bufp = buf->buf + LZ4_EXTRA_SZ;
 			while (sz_left > 0) {
@@ -294,6 +462,7 @@ _drain_thr(void *priv)
 				buf->bufp += ssz_written;
 				sz_left -= (size_t)ssz_written;
 			}
+			break;
 		}
 
 
@@ -324,7 +493,7 @@ _drain_thr(void *priv)
 
 
 struct buffer_cache_ctx *
-buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt)
+buffer_cache_init(const char *file, int compress, size_t buffer_size_mb, size_t buffer_cnt)
 {
 	struct bc_buffer *buf;
 	struct buffer_cache_ctx *ctx = NULL;
@@ -346,8 +515,7 @@ buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt)
 
 	memset(ctx, 0, sizeof(*ctx));
 	ctx->fd = -1;
-	ctx->use_lz4 = 1;
-	ctx->lz4_state.stream_checksum = 1;
+	ctx->compress = compress;
 
 	pthread_cond_init(&ctx->empty_cv, NULL);
 	pthread_cond_init(&ctx->drain_cv, NULL);
@@ -367,14 +535,47 @@ buffer_cache_init(const char *file, size_t buffer_size_mb, size_t buffer_cnt)
 		return NULL;
 	}
 
-	if (ctx->use_lz4) {
+	switch (ctx->compress) {
+#ifndef _WITHOUT_LZ4
+	case BC_COMP_LZ4:
+		ctx->lz4_state.stream_checksum = 1;
 		ctx->lz4_state.first = 1;
 		ctx->lz4_state.xxh32_state = XXH32_init(0);
-		if ((r = lz4write_hdr(ctx)) != 0) {
+		if ((r = lz4_write_hdr(ctx)) != 0) {
 			fprintf(stderr, "Failed to write LZ4 header");
 			buffer_cache_destroy(ctx);
 			return NULL;
 		}
+		break;
+#endif
+
+#ifdef _WITH_ZLIB
+	case BC_COMP_ZLIB:
+		ctx->zlib_state.zlib_strm.zalloc = NULL;
+		ctx->zlib_state.zlib_strm.zfree = NULL;
+		ctx->zlib_state.zlib_strm.opaque = NULL;
+		ctx->zlib_state.isize = 0;
+		ctx->zlib_state.zlib_crc32 = crc32(0L, Z_NULL, 0);
+		if ((r = deflateInit2(&ctx->zlib_state.zlib_strm, 1 /* level */, Z_DEFLATED, (-MAX_WBITS), 8, Z_DEFAULT_STRATEGY)) != Z_OK) {
+			fprintf(stderr, "Failed to initialize deflate");
+			buffer_cache_destroy(ctx);
+			return NULL;
+		}
+		if ((r = zlib_write_hdr(ctx)) != 0) {
+			fprintf(stderr, "Failed to write gzip header");
+			buffer_cache_destroy(ctx);
+			return NULL;
+		}
+		break;
+#endif
+
+	case BC_COMP_NONE:
+		break;
+
+	default:
+		fprintf(stderr, "Invalid compression option\n");
+		buffer_cache_destroy(ctx);
+		return NULL;
 	}
 
 	ctx->buffer_size = buffer_size_b;
@@ -557,8 +758,25 @@ buffer_cache_destroy(struct buffer_cache_ctx *ctx)
 	pthread_mutex_destroy(&ctx->empty_mtx);
 
 	if (ctx->fd >= 0) {
-		if (ctx->use_lz4 && ctx->lz4_state.hdr_written)
-			lz4write_tail(ctx);
+		switch (ctx->compress) {
+#ifndef _WITHOUT_LZ4
+		case BC_COMP_LZ4:
+			if (ctx->lz4_state.hdr_written)
+				lz4_write_tail(ctx);
+			break;
+#endif
+
+#ifdef _WITH_ZLIB
+		case BC_COMP_ZLIB:
+			if (ctx->zlib_state.hdr_written)
+				zlib_write_tail(ctx);
+			break;
+#endif
+
+		default:
+			break;
+		}
+
 		close(ctx->fd);
 	}
 

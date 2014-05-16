@@ -1,7 +1,7 @@
 all: test_bc test_write
 
 test_bc: buffer_cache.c lz4/lz4.c lz4/xxhash.c test_bc.c
-	gcc -O4 $^ -o test_bc -lpthread
+	gcc -O4 $^ -D_WITH_ZLIB -o test_bc -lpthread -lz
 
 test_write: test_write.c
 	gcc -O0 test_write.c -o test_write
