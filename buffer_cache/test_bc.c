@@ -13,19 +13,17 @@ int
 main(int argc, char *argv[]) {
 	struct buffer_cache_ctx *bc;
 	char buf[16];
-	int i, r;
+	int i, j, r;
 
 	memset(buf, 0, sizeof(buf));
 	bc = buffer_cache_init("bc_test.trace", 32, 4);
 	assert (bc != NULL);
 
-	for (i = 0; i < 1024*1024*128; i++) {
+	for (i = 0, j = 1024*1024*512; i < 1024*1024*1024; i++, j--) {
 		memcpy(buf, &i, sizeof(i));
-		r = buffer_cache_write(bc, buf, sizeof(buf));
+		memcpy(buf+sizeof(i), &j, sizeof(j));
+		r = buffer_cache_write(bc, buf, sizeof(i)+sizeof(j)+4);
 		assert (r == 0);
-
-		if ((i % 1024) == 0)
-			buffer_cache_drain(bc);
 	}
 
 	buffer_cache_destroy(bc);

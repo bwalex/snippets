@@ -12,17 +12,19 @@ int
 main(int argc, char *argv[]) {
 	struct buffer_cache_ctx *bc;
 	char buf[16];
-	int i, fd;
+	int i, j, fd;
 	ssize_t ssz;
 
 	memset(buf, 0, sizeof(buf));
 	fd = open("wr_test.trace", O_WRONLY | O_CREAT | O_TRUNC, 00666);
 	assert (fd >= 0);
 
-	for (i = 0; i < 1024*1024*128; i++) {
+
+	for (i = 0, j = 1024*1024*512; i < 1024*1024*1024; i++, j--) {
 		memcpy(buf, &i, sizeof(i));
-		ssz = write(fd, buf, sizeof(buf));
-		assert (ssz == sizeof(buf));
+		memcpy(buf+sizeof(i), &j, sizeof(j));
+		ssz = write(fd, buf, sizeof(i)+sizeof(j)+4);
+		assert (ssz == sizeof(i)+sizeof(j)+4);
 	}
 
 	close(fd);
