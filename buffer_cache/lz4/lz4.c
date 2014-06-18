@@ -599,7 +599,7 @@ int LZ4_compress_limitedOutput(const char* source, char* dest, int inputSize, in
    Using external allocation
 *****************************/
 
-int LZ4_sizeofState() { return 1 << MEMORY_USAGE; }
+int LZ4_sizeofState(void) { return 1 << MEMORY_USAGE; }
 
 
 int LZ4_compress_withState (void* state, const char* source, char* dest, int inputSize)
@@ -630,7 +630,7 @@ int LZ4_compress_limitedOutput_withState (void* state, const char* source, char*
    Stream functions
 ****************************/
 
-int LZ4_sizeofStreamState()
+int LZ4_sizeofStreamState(void)
 {
     return sizeof(LZ4_Data_Structure);
 }
