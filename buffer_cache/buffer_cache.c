@@ -179,12 +179,10 @@ lz4_write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
 {
 	struct lz4_state *lz4_ctx = &ctx->lz4_state;
 	ssize_t ssz_written;
-	size_t sz_consumed;
 	size_t sz_left;
 	unsigned int in_sz, out_sz;
 	unsigned char *bufp;
 	unsigned int sz_val;
-	int r;
 
 	if (!lz4_ctx->first) {
 		/*
@@ -207,8 +205,8 @@ lz4_write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
 		 * (Try to) compress into obuf+4, keeping the first 4 bytes for
 		 * size information.
 		 */
-		out_sz = LZ4_compress_limitedOutput(buf->bufp, lz4_ctx->lz4_obuf+4,
-		    in_sz, in_sz-1);
+		out_sz = LZ4_compress_limitedOutput((char *)buf->bufp,
+		    (char *)lz4_ctx->lz4_obuf+4, in_sz, in_sz-1);
 
 		/* XXX: all things lz4 assume little endian */
 		if (out_sz > 0) {
@@ -338,7 +336,6 @@ zlib_write_buf(struct buffer_cache_ctx *ctx, struct bc_buffer *buf)
 {
 	struct zlib_state *zlib_ctx = &ctx->zlib_state;
 	ssize_t ssz_written;
-	size_t sz_consumed;
 	size_t sz_left;
 	size_t out_sz;
 	unsigned char *bufp;
