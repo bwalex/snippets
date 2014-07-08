@@ -40,7 +40,7 @@ typedef enum {
 	CMP_EQ,
 	CMP_GT,
 	CMP_LT
-} jit_cmptype_t;
+} jit_cc_t;
 
 // http://wiki.osdev.org/X86-64_Instruction_Encoding
 // http://courses.engr.illinois.edu/ece390/archive/spr2002/books/labmanual/index.html
@@ -86,6 +86,7 @@ typedef enum {
 #define MODRM_REG_SHL		0x4
 #define MODRM_REG_SHR		0x5
 
+#if 0
 #define REG_EAX			0x0
 #define REG_ECX			0x1
 #define REG_EDX			0x2
@@ -104,6 +105,7 @@ typedef enum {
 #define REG_R13			0xD
 #define REG_R14			0xE
 #define REG_R15			0xF
+#endif
 
 typedef struct jit_reloc
 {
@@ -112,6 +114,8 @@ typedef struct jit_reloc
 
 typedef struct jit_label
 {
+	int		id;
+
 	int		has_target;
 	uintptr_t	target;
 
@@ -134,8 +138,373 @@ typedef struct jit_codebuf
 } *jit_codebuf_t;
 
 
+typedef enum {
+	JITOP_AND = 0,
+	JITOP_ANDI,
+	JITOP_OR,
+	JITOP_ORI,
+	JITOP_XOR,
+	JITOP_XORI,
+	JITOP_ADD,
+	JITOP_ADDI,
+	JITOP_NOT,
+	JITOP_SHL,
+	JITOP_SHLI,
+	JITOP_SHR,
+	JITOP_SHRI,
+	JITOP_MOV,
+	JITOP_MOVI,
+	JITOP_LDRI,
+	JITOP_LDRR,
+	JITOP_LDRBPO,
+	JITOP_LDRBPSO,
+	JITOP_STRI,
+	JITOP_STRR,
+	JITOP_STRBPO,
+	JITOP_STRBPSO,
+	JITOP_BRANCH,
+	JITOP_BCMP,
+	JITOP_BCMPI,
+	JITOP_BNCMP,
+	JITOP_BNCMPI,
+	JITOP_BTEST,
+	JITOP_BTESTI,
+	JITOP_BNTEST,
+	JITOP_BNTESTI,
+	JITOP_SET_LABEL,
+	JITOP_RET,
+	JITOP_RETI,
+	JITOP_BSWAP,
+	JITOP_CLZ,
+	JITOP_BFE,
+	JITOP_CMOV,
+	JITOP_CMOVI,
+	JITOP_CSEL,
+	JITOP_CSELI,
+	JITOP_CSET,
+	JITOP_CSETI,
+	JITOP_FN_PROLOGUE
+} jit_op_t;
+
+typedef struct jit_op_def {
+	const char	*mnemonic;
+	int		out_args;
+	int		in_args;
+	const char	*fmt;
+} *jit_op_def_t;
+
+static struct jit_op_def op_def[] = {
+	[JITOP_AND]	= { .mnemonic = "and",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_ANDI]	= { .mnemonic = "andi",    .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_OR]	= { .mnemonic = "or",      .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_ORI]	= { .mnemonic = "ori",     .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_XOR]	= { .mnemonic = "xor",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_XORI]	= { .mnemonic = "xori",    .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_ADD]	= { .mnemonic = "add",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_ADDI]	= { .mnemonic = "addi",    .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_SHL]	= { .mnemonic = "shl",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_SHLI]	= { .mnemonic = "shli",    .out_args = 1, .in_args = 2, .fmt = "rI"    },
+	[JITOP_SHR]	= { .mnemonic = "shr",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_SHRI]	= { .mnemonic = "shri",    .out_args = 1, .in_args = 2, .fmt = "rI"    },
+	[JITOP_MOV]	= { .mnemonic = "mov",     .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_MOVI]	= { .mnemonic = "movi",    .out_args = 1, .in_args = 1, .fmt = "i"     },
+	[JITOP_NOT]	= { .mnemonic = "not",     .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_BSWAP]	= { .mnemonic = "bswap",   .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_CLZ]	= { .mnemonic = "clz",     .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_BFE]	= { .mnemonic = "bfe",     .out_args = 1, .in_args = 3, .fmt = "rII"   },
+	[JITOP_LDRI]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 1, .fmt = "i"     },
+	[JITOP_LDRR]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_LDRBPO]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_LDRBPSO]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 3, .fmt = "rri"   },
+	[JITOP_STRI]	= { .mnemonic = "str",     .out_args = 0, .in_args = 2, .fmt = "ri"    },
+	[JITOP_STRR]	= { .mnemonic = "str",     .out_args = 0, .in_args = 2, .fmt = "rr"    },
+	[JITOP_STRBPO]	= { .mnemonic = "str",     .out_args = 0, .in_args = 3, .fmt = "rri"   },
+	[JITOP_STRBPSO]	= { .mnemonic = "str",     .out_args = 0, .in_args = 4, .fmt = "rrri"  },
+	[JITOP_BRANCH]	= { .mnemonic = "b",       .out_args = 0, .in_args = 1, .fmt = "l"     },
+	[JITOP_BCMP]	= { .mnemonic = "bcmp",    .out_args = 0, .in_args = 4, .fmt = "lcrr"  },
+	[JITOP_BCMPI]	= { .mnemonic = "bcmpi",   .out_args = 0, .in_args = 4, .fmt = "lcri"  },
+	[JITOP_BNCMP]	= { .mnemonic = "bncmp",   .out_args = 0, .in_args = 3, .fmt = "lcrr"  },
+	[JITOP_BNCMPI]	= { .mnemonic = "bncmpi",  .out_args = 0, .in_args = 3, .fmt = "lcri"  },
+	[JITOP_BTEST]	= { .mnemonic = "btest",   .out_args = 0, .in_args = 3, .fmt = "lrr"   },
+	[JITOP_BTESTI]	= { .mnemonic = "btesti",  .out_args = 0, .in_args = 3, .fmt = "lri"   },
+	[JITOP_BNTEST]	= { .mnemonic = "bntest",  .out_args = 0, .in_args = 3, .fmt = "lrr"   },
+	[JITOP_BNTESTI]	= { .mnemonic = "bntesti", .out_args = 0, .in_args = 3, .fmt = "lri"   },
+	[JITOP_RET]	= { .mnemonic = "ret",     .out_args = 0, .in_args = 1, .fmt = "r"     },
+	[JITOP_RETI]	= { .mnemonic = "reti",    .out_args = 0, .in_args = 1, .fmt = "i"     },
+	[JITOP_CMOV]	= { .mnemonic = "cmov",    .out_args = 1, .in_args = 4, .fmt = "rcrr"  },
+	[JITOP_CMOVI]	= { .mnemonic = "cmovi",   .out_args = 1, .in_args = 4, .fmt = "rcri"  },
+	[JITOP_CSEL]	= { .mnemonic = "csel",    .out_args = 1, .in_args = 5, .fmt = "rrcrr" },
+	[JITOP_CSELI]	= { .mnemonic = "cseli",   .out_args = 1, .in_args = 5, .fmt = "rrcri" },
+	[JITOP_CSET]	= { .mnemonic = "cset",    .out_args = 1, .in_args = 3, .fmt = "crr"   },
+	[JITOP_CSETI]	= { .mnemonic = "cseti",   .out_args = 1, .in_args = 3, .fmt = "cri"   },
+	[JITOP_SET_LABEL] = { .mnemonic = "set_label", .out_args = 0, .in_args = 1, .fmt = "l" }
+};
+
+
+#define JITOP_DW_8	0x00
+#define	JITOP_DW_16	0x01
+#define JITOP_DW_32	0x02
+#define JITOP_DW_64	0x03
+
+#define JITOP(op, dw, cc_dw)	\
+    (((op) & 0xffff) | (((dw) & 0x3) << 16) | (((cc_dw) & 0x3) << 24))
+
+#define JITOP_OP(opc)	\
+    ((opc) & 0xffff)
+
+#define JITOP_DW(opc)	\
+    (((opc) >> 16) & 0x3)
+
+#define JITOP_CC_DW(opc)	\
+    (((opc) >> 24) & 0x3)
+
+typedef enum jit_tmp_loc {
+	JITLOC_UNALLOCATED,
+	JITLOC_STACK,
+	JITLOC_REG
+} jit_tmp_loc_t;
+
+typedef struct jit_tmp_use {
+	int			use_idx;
+	int			generation;
+
+	struct jit_tmp_use	*prev;
+	struct jit_tmp_use	*next;
+} *jit_tmp_use_t;
+
+typedef struct jit_tmp_scan {
+	/*
+	 * Keep track of the generation of the temp; bumped every time it's used
+	 * as a destination of an operation.
+	 */
+	int		generation;
+	jit_tmp_use_t	use_head;
+	jit_tmp_use_t	use_tail;
+
+	/* Use metrics */
+	int		use_count;
+	int		first_use;
+} *jit_tmp_scan_t;
+
+typedef struct jit_tmp_out_scan {
+	int		generation;
+	int		last_used;
+} *jit_tmp_out_scan_t;
+
+typedef struct jit_tmp_state {
+	unsigned int	dirty  : 1;
+	unsigned int	local  : 1;
+	unsigned int	w64    : 1;
+	unsigned int	pinned : 1;
+	unsigned int	mem_allocated : 1;
+	unsigned int	constant : 1;
+	jit_tmp_loc_t	loc;
+	int		reg;
+	int		mem_base_reg;
+	int		mem_offset;
+	int		id;
+	struct jit_tmp_scan	scan;
+	struct jit_tmp_out_scan	out_scan;
+} *jit_tmp_state_t;
+
+struct jit_ctx;
+
+typedef uint32_t jit_tmp_t;
+
+typedef uint64_t jit_regset_t;
+
+#define popcnt(x)	__builtin_popcountl((x))
+
+#define jit_regset_empty(r)		((r) = 0UL)
+#define jit_regset_full(r)		((r) = 0xFFFFFFFFFFFFFFFFUL)
+#define jit_regset_assign(r, i)		((r) = i)
+
+#define jit_regset_union(r1, r2)	((r1) | (r2))
+#define jit_regset_intersection(r1, r2)	((r1) & (r2))
+
+#define jit_regset_set(r, reg)		((r) |=  (1UL << reg))
+#define jit_regset_clear(r, reg)	((r) &= ~(1UL << reg))
+#define jit_regset_test(r, reg)		((r) &  (1UL << reg))
+#define jit_regset_is_empty(r)		((r) == 0)
+#define jit_regset_is_full(r)		((r) == 0xFFFFFFFFFFFFFFFFUL)
+#define jit_regset_popcnt(r)		(popcnt(r))
+
+
+#define JIT_TMP_LOCAL(idx)	((idx) | (1 << 31))
+#define JIT_TMP_IS_LOCAL(tmp)	(((tmp) & (1 << 31)) != 0)
+#define JIT_TMP_INDEX(tmp)	((tmp) & 0x7FFFFFFF)
+
+/* Basic block, ending at branch or label */
+typedef struct jit_bb
+{
+	struct jit_ctx	*ctx;
+	uint32_t	opcodes[1024];
+	uint64_t	params[3192];
+	uint32_t	*opc_ptr;
+	uint64_t	*param_ptr;
+
+	int		opc_cnt;
+
+	/* XXX: fill these out... */
+	int		tmp_idx_1st;
+	int		tmp_idx_last;
+} *jit_bb_t;
+
+#define REG_SET_USED(ctx, regno, tmp)			\
+    do {						\
+	    (ctx)->regs_used  |= (1UL << regno);	\
+	    (ctx)->reg_to_tmp[regno] = tmp;		\
+    } while (0)
+
+#define REG_CLR_USED(ctx, regno)			\
+    do {						\
+	    (ctx)->regs_used &= ~(1UL << regno);	\
+    } while (0)
+
+
+/*
+ * XXX: which instructions have requirements on which registers can be used?
+ * XXX: other constraints for example on immediate values (e.g. only power-of-2)
+ * XXX: how to satisfy those constraints?
+ */
+
+/*
+ * XXX: at end of bb:
+ *       - do REG_CLR_USED of all bb temps
+ *       - spill all (ctx-) local temps (unless pinned)
+ */
+/*
+ * XXX: proper liveness analysis on local temps, to avoid the spilling &
+ *      filling drama if unused
+ */
+
+typedef struct jit_ctx
+{
+	int		local_tmps_cnt;
+	int		local_tmps_sz;
+	jit_tmp_state_t	local_tmps;
+
+	int		bb_tmps_cnt;
+	int		bb_tmps_sz;
+	jit_tmp_state_t	bb_tmps;
+
+
+	int		cur_block;
+	int		block_cnt;
+	int		blocks_sz;
+	jit_bb_t	blocks;
+
+	uint8_t		*code_buf;
+	size_t		code_buf_sz;
+
+	uint8_t		*code_ptr;
+	size_t		code_sz;
+
+	/* Register allocation tracking */
+	jit_regset_t	regs_used;
+	jit_tmp_t	reg_to_tmp[64];
+	jit_regset_t	overall_choice;
+
+	int32_t		spill_stack_offset;
+} *jit_ctx_t;
+
+/* Data processing: logical */
+void jit_emit_and(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_andi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm);
+void jit_emit_or(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_ori(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm);
+void jit_emit_xor(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_xori(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm);
+void jit_emit_not(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
+void jit_emit_shl(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_shli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t imm);
+void jit_emit_shr(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_shri(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t imm);
+
+/* Data processing: moves */
+void jit_emit_mov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
+void jit_emit_movi(jit_ctx_t ctx, jit_tmp_t dst, uint64_t imm);
+
+/* Data processing: misc bitops, etc */
+void jit_emit_bswap(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
+void jit_emit_clz(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
+void jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t hi, uint8_t lo);
+
+/* Data processing: arithmetic */
+void jit_emit_add(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_addi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm);
+
+/* Control flow: local branches */
+void jit_emit_branch(jit_ctx_t ctx, jit_label_t label);
+void jit_emit_bcmp(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_bcmpi(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_bncmp(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_bncmpi(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_btest(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_btesti(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, uint64_t imm);
+void jit_emit_bntest(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_bntesti(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, uint64_t imm);
+void jit_emit_set_label(jit_ctx_t ctx, jit_label_t label);
+
+
+void
+jit_emit_cmov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void
+jit_emit_cmovi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_csel(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_cseli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_cset(jit_ctx_t ctx, jit_tmp_t dst, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_cseti(jit_ctx_t ctx, jit_tmp_t dst, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
+
+/* XXX: load byte, load halfword, load word, load doubleword */
+/* XXX: and same for store... */
+/* Memory: loads */
+/* r1 <- [r2] */
+void jit_emit_ldr_reg(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r2);
+/* r1 <- [imm] */
+void jit_emit_ldr_imm(jit_ctx_t ctx, jit_tmp_t dst, uint64_t imm);
+/* r1 <- [r2 + imm] */
+void jit_emit_ldr_base_imm(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r2, uint64_t imm);
+/* r1 <- [r2 + (r3 << scale)] */
+void jit_emit_ldr_base_sr(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
+
+/* Memory: stores */
+/* [r2] <- r1 */
+void jit_emit_str_reg(jit_ctx_t ctx, jit_tmp_t r1, jit_tmp_t r2);
+/* [imm] <- r1 */
+void jit_emit_str_imm(jit_ctx_t ctx, jit_tmp_t r1, uint64_t imm);
+/* [r2 + imm] <- r1 */
+void jit_emit_str_base_imm(jit_ctx_t ctx, jit_tmp_t r1, jit_tmp_t r2, uint64_t imm);
+/* [r2 + (r3 << scale)] <- r1 */
+void jit_emit_str_base_sr(jit_ctx_t ctx, jit_tmp_t r1, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
+
+int jit_ctx_init(jit_ctx_t ctx);
+jit_tmp_t jit_new_tmp64(jit_ctx_t ctx);
+jit_tmp_t jit_new_tmp32(jit_ctx_t ctx);
+jit_tmp_t jit_new_local_tmp64(jit_ctx_t ctx);
+jit_tmp_t jit_new_local_tmp32(jit_ctx_t ctx);
+
+void jit_print_ir(jit_ctx_t ctx);
+
+/* XXX: force the specified tmp to always be in a register (nessarily always the same reg) */
+void jit_pin_local_tmp(jit_ctx_t ctx, jit_tmp_t tmp);
+
+void jit_emit_fn_prologue(jit_ctx_t ctx, const char *fmt, ...);
+void jit_emit_ret(jit_ctx_t ctx, jit_tmp_t r1);
+void jit_emit_reti(jit_ctx_t ctx, uint64_t imm);
+
+/* XXX: branch comparison width */
+/* XXX: branch label first */
+
+/* XXX: fmt: iittti for immediate, immediate, temp, temp, temp, immediate */
+/* XXX: return value tmp? also make optional... */
+void jit_emit_call(jit_ctx_t, void *fn, const char *fmt, ...);
+
+#if 0
+/* XXX: code gen stuff */
 void jit_emit8(jit_codebuf_t code, uint8_t u8);
 void jit_emit32(jit_codebuf_t code, uint32_t u32);
+void jit_emit64(jit_codebuf_t code, uint32_t u32);
 
 int jit_label_init(jit_codebuf_t code);
 uintptr_t jit_label_get_target(jit_codebuf_t code, int label_idx);
@@ -157,3 +526,8 @@ void jit_emit_jcc(jit_codebuf_t code, jit_cmptype_t cmp, int label_idx);
 void jit_emit_jncc(jit_codebuf_t code, jit_cmptype_t cmp, int label_idx);
 
 #endif
+#endif
+
+
+/* XXX!!! */
+#define JIT_TGT_STACK_BASE_REG 0
