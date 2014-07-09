@@ -18,4 +18,5 @@ test:	$(OBJS) $(X86OBJS)
 
 clean:
 	rm -f $(OBJS)
+	rm -f $(X86OBJS)
 	rm -f test

@@ -183,63 +183,21 @@ typedef enum {
 	JITOP_CSELI,
 	JITOP_CSET,
 	JITOP_CSETI,
-	JITOP_FN_PROLOGUE
+	JITOP_FN_PROLOGUE,
+	JITOP_NOP,
+	JITOP_NOPN
 } jit_op_t;
 
 typedef struct jit_op_def {
 	const char	*mnemonic;
 	int		out_args;
 	int		in_args;
+	int		side_effects;
 	const char	*fmt;
-} *jit_op_def_t;
+} const *jit_op_def_t;
 
-static struct jit_op_def op_def[] = {
-	[JITOP_AND]	= { .mnemonic = "and",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
-	[JITOP_ANDI]	= { .mnemonic = "andi",    .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_OR]	= { .mnemonic = "or",      .out_args = 1, .in_args = 2, .fmt = "rr"    },
-	[JITOP_ORI]	= { .mnemonic = "ori",     .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_XOR]	= { .mnemonic = "xor",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
-	[JITOP_XORI]	= { .mnemonic = "xori",    .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_ADD]	= { .mnemonic = "add",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
-	[JITOP_ADDI]	= { .mnemonic = "addi",    .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_SHL]	= { .mnemonic = "shl",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
-	[JITOP_SHLI]	= { .mnemonic = "shli",    .out_args = 1, .in_args = 2, .fmt = "rI"    },
-	[JITOP_SHR]	= { .mnemonic = "shr",     .out_args = 1, .in_args = 2, .fmt = "rr"    },
-	[JITOP_SHRI]	= { .mnemonic = "shri",    .out_args = 1, .in_args = 2, .fmt = "rI"    },
-	[JITOP_MOV]	= { .mnemonic = "mov",     .out_args = 1, .in_args = 1, .fmt = "r"     },
-	[JITOP_MOVI]	= { .mnemonic = "movi",    .out_args = 1, .in_args = 1, .fmt = "i"     },
-	[JITOP_NOT]	= { .mnemonic = "not",     .out_args = 1, .in_args = 1, .fmt = "r"     },
-	[JITOP_BSWAP]	= { .mnemonic = "bswap",   .out_args = 1, .in_args = 1, .fmt = "r"     },
-	[JITOP_CLZ]	= { .mnemonic = "clz",     .out_args = 1, .in_args = 1, .fmt = "r"     },
-	[JITOP_BFE]	= { .mnemonic = "bfe",     .out_args = 1, .in_args = 3, .fmt = "rII"   },
-	[JITOP_LDRI]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 1, .fmt = "i"     },
-	[JITOP_LDRR]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 1, .fmt = "r"     },
-	[JITOP_LDRBPO]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_LDRBPSO]	= { .mnemonic = "ldr",     .out_args = 1, .in_args = 3, .fmt = "rri"   },
-	[JITOP_STRI]	= { .mnemonic = "str",     .out_args = 0, .in_args = 2, .fmt = "ri"    },
-	[JITOP_STRR]	= { .mnemonic = "str",     .out_args = 0, .in_args = 2, .fmt = "rr"    },
-	[JITOP_STRBPO]	= { .mnemonic = "str",     .out_args = 0, .in_args = 3, .fmt = "rri"   },
-	[JITOP_STRBPSO]	= { .mnemonic = "str",     .out_args = 0, .in_args = 4, .fmt = "rrri"  },
-	[JITOP_BRANCH]	= { .mnemonic = "b",       .out_args = 0, .in_args = 1, .fmt = "l"     },
-	[JITOP_BCMP]	= { .mnemonic = "bcmp",    .out_args = 0, .in_args = 4, .fmt = "lcrr"  },
-	[JITOP_BCMPI]	= { .mnemonic = "bcmpi",   .out_args = 0, .in_args = 4, .fmt = "lcri"  },
-	[JITOP_BNCMP]	= { .mnemonic = "bncmp",   .out_args = 0, .in_args = 3, .fmt = "lcrr"  },
-	[JITOP_BNCMPI]	= { .mnemonic = "bncmpi",  .out_args = 0, .in_args = 3, .fmt = "lcri"  },
-	[JITOP_BTEST]	= { .mnemonic = "btest",   .out_args = 0, .in_args = 3, .fmt = "lrr"   },
-	[JITOP_BTESTI]	= { .mnemonic = "btesti",  .out_args = 0, .in_args = 3, .fmt = "lri"   },
-	[JITOP_BNTEST]	= { .mnemonic = "bntest",  .out_args = 0, .in_args = 3, .fmt = "lrr"   },
-	[JITOP_BNTESTI]	= { .mnemonic = "bntesti", .out_args = 0, .in_args = 3, .fmt = "lri"   },
-	[JITOP_RET]	= { .mnemonic = "ret",     .out_args = 0, .in_args = 1, .fmt = "r"     },
-	[JITOP_RETI]	= { .mnemonic = "reti",    .out_args = 0, .in_args = 1, .fmt = "i"     },
-	[JITOP_CMOV]	= { .mnemonic = "cmov",    .out_args = 1, .in_args = 4, .fmt = "rcrr"  },
-	[JITOP_CMOVI]	= { .mnemonic = "cmovi",   .out_args = 1, .in_args = 4, .fmt = "rcri"  },
-	[JITOP_CSEL]	= { .mnemonic = "csel",    .out_args = 1, .in_args = 5, .fmt = "rrcrr" },
-	[JITOP_CSELI]	= { .mnemonic = "cseli",   .out_args = 1, .in_args = 5, .fmt = "rrcri" },
-	[JITOP_CSET]	= { .mnemonic = "cset",    .out_args = 1, .in_args = 3, .fmt = "crr"   },
-	[JITOP_CSETI]	= { .mnemonic = "cseti",   .out_args = 1, .in_args = 3, .fmt = "cri"   },
-	[JITOP_SET_LABEL] = { .mnemonic = "set_label", .out_args = 0, .in_args = 1, .fmt = "l" }
-};
 
+extern struct jit_op_def const op_def[];
 
 #define JITOP_DW_8	0x00
 #define	JITOP_DW_16	0x01
@@ -333,6 +291,15 @@ typedef uint64_t jit_regset_t;
 #define JIT_TMP_LOCAL(idx)	((idx) | (1 << 31))
 #define JIT_TMP_IS_LOCAL(tmp)	(((tmp) & (1 << 31)) != 0)
 #define JIT_TMP_INDEX(tmp)	((tmp) & 0x7FFFFFFF)
+
+/*
+ * XXX: GET_TMP_STATE() should check if the tmp is allocated or not in
+ *      the first place.
+ */
+#define GET_TMP_STATE(ctx, t)						\
+    ((JIT_TMP_IS_LOCAL(t)) ? &ctx->local_tmps[JIT_TMP_INDEX(t)] :	\
+     &ctx->bb_tmps[JIT_TMP_INDEX(t)])
+
 
 /* Basic block, ending at branch or label */
 typedef struct jit_bb
@@ -485,6 +452,8 @@ jit_tmp_t jit_new_local_tmp64(jit_ctx_t ctx);
 jit_tmp_t jit_new_local_tmp32(jit_ctx_t ctx);
 
 void jit_print_ir(jit_ctx_t ctx);
+void jit_optimize(jit_ctx_t ctx);
+void jit_process(jit_ctx_t ctx);
 
 /* XXX: force the specified tmp to always be in a register (nessarily always the same reg) */
 void jit_pin_local_tmp(jit_ctx_t ctx, jit_tmp_t tmp);
@@ -530,4 +499,3 @@ void jit_emit_jncc(jit_codebuf_t code, jit_cmptype_t cmp, int label_idx);
 
 
 /* XXX!!! */
-#define JIT_TGT_STACK_BASE_REG 0

@@ -31,6 +31,10 @@ int main(void)
 	jit_emit_or(&ctx, e, e, d);
 
 	jit_print_ir(&ctx);
+	jit_optimize(&ctx);
+	jit_print_ir(&ctx);
+
+	jit_process(&ctx);
 
 	return 0;
 }

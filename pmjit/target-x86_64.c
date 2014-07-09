@@ -58,7 +58,28 @@ typedef enum {
 	REG_R15
 } x86_reg;
 
-struct jit_tgt_op_def tgt_op_def[] = {
+const char *reg_to_name[] = {
+	[REG_RAX]	= "rax",
+	[REG_RCX]	= "rcx",
+	[REG_RDX]	= "rdx",
+	[REG_RBX]	= "rbx",
+	[REG_RSP]	= "rsp",
+	[REG_RBP]	= "rbp",
+	[REG_RSI]	= "rsi",
+	[REG_RDI]	= "rdi",
+	[REG_R8]	= "r8 ",
+	[REG_R9]	= "r9 ",
+	[REG_R10]	= "r10",
+	[REG_R11]	= "r11",
+	[REG_R12]	= "r12",
+	[REG_R13]	= "r13",
+	[REG_R14]	= "r14",
+	[REG_R15]	= "r15"
+};
+
+const int jit_tgt_stack_base_reg = REG_RSP;
+
+struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
 	/* AND r/m32/64, r32/64 (and vice versa) */
 
@@ -196,6 +217,7 @@ jit_tgt_reg_restrict(jit_ctx_t ctx, jit_op_t op, char constraint)
 		break;
 
 	default:
+		printf("constraint: %c\n", constraint);
 		assert (0);
 		break;
 	}
@@ -207,4 +229,99 @@ jit_tgt_reg_restrict(jit_ctx_t ctx, jit_op_t op, char constraint)
 void
 jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 {
+	jit_op_t op = JITOP_OP(opc);
+	int dw = JITOP_DW(opc);
+	int cc_dw = JITOP_CC_DW(opc);
+
+	printf("cg:\t");
+	switch (op) {
+	case JITOP_MOV:
+		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]]);
+		break;
+
+	case JITOP_MOVI:
+		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], params[1]);
+		break;
+
+	case JITOP_OR:
+	case JITOP_AND:
+	case JITOP_XOR:
+	case JITOP_ADD:
+		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], reg_to_name[params[2]]);
+		//printf("%s.%d\t%s, %s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], reg_to_name[params[2]]);
+		assert(params[0] == params[1]);
+		break;
+
+	case JITOP_ORI:
+	case JITOP_ANDI:
+	case JITOP_XORI:
+	case JITOP_ADDI:
+		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], params[2]);
+		//printf("%s.%d\t%s, %s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], params[2]);
+		assert(params[0] == params[1]);
+		break;
+
+	case JITOP_LDRBPO:
+		printf("%s.%d\t%s, [%s + $%"PRId64"]\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], params[2]);
+		break;
+
+	case JITOP_STRBPO:
+		printf("%s.%d\t%s, [%s + $%"PRId64"]\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], params[2]);
+		break;
+
+	default:
+		printf("%s.%d\n", op_def[op].mnemonic, dw);
+		break;
+	}
+}
+
+
+void
+jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
+{
+	jit_tmp_t tmp;
+	jit_tmp_state_t ts;
+	int i;
+
+	for (i = 0; i < cnt; i++) {
+		tmp = (jit_tmp_t)params[i];
+		ts = GET_TMP_STATE(ctx, tmp);
+
+		/* XXX: do properly... */
+		ts->loc = JITLOC_STACK;
+		ts->mem_allocated = 1;
+		ts->mem_base_reg = jit_tgt_stack_base_reg;
+		ts->mem_offset = -i*sizeof(uint64_t);
+	}
+}
+
+
+void
+jit_tgt_ctx_init(jit_ctx_t ctx)
+{
+	jit_regset_empty(ctx->overall_choice);
+	jit_regset_set(ctx->overall_choice, REG_RAX);
+	jit_regset_set(ctx->overall_choice, REG_RCX);
+#if 0
+	jit_regset_set(ctx->overall_choice, REG_RDX);
+	jit_regset_set(ctx->overall_choice, REG_RBX);
+	jit_regset_set(ctx->overall_choice, REG_RSI);
+	jit_regset_set(ctx->overall_choice, REG_RDI);
+	jit_regset_set(ctx->overall_choice, REG_R8);
+	jit_regset_set(ctx->overall_choice, REG_R9);
+	jit_regset_set(ctx->overall_choice, REG_R10);
+	jit_regset_set(ctx->overall_choice, REG_R11);
+	jit_regset_set(ctx->overall_choice, REG_R12);
+	jit_regset_set(ctx->overall_choice, REG_R13);
+	jit_regset_set(ctx->overall_choice, REG_R14);
+	jit_regset_set(ctx->overall_choice, REG_R15);
+#endif
+}
+
+
+void
+jit_tgt_init(void)
+{
+	/* XXX: do cpuid or whatever to detect supported features */
+	return;
 }
