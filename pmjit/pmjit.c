@@ -1759,7 +1759,13 @@ bb_remove_dead(jit_ctx_t ctx, jit_bb_t bb) {
 				ts = GET_TMP_STATE(ctx, tmp);
 
 				++ts->out_scan.generation;
-				if (!tmp_is_relatively_dead(ctx, bb, tmp, ts->out_scan.generation))
+
+				/*
+				 * If the temp is not a local temp, and it's relatively dead,
+				 * then this result is dead.
+				 */
+				if (ts->local ||
+				    !tmp_is_relatively_dead(ctx, bb, tmp, ts->out_scan.generation))
 					dead = 0;
 			}
 

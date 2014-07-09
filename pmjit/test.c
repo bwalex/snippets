@@ -30,8 +30,11 @@ int main(void)
 	jit_emit_xori(&ctx, e, e, f);
 	jit_emit_or(&ctx, e, e, d);
 
+	printf("\n=== Pre-optimization IR:  ===\n");
 	jit_print_ir(&ctx);
+
 	jit_optimize(&ctx);
+	printf("\n=== Post-optimization IR: ===\n");
 	jit_print_ir(&ctx);
 
 	jit_process(&ctx);

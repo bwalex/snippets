@@ -77,7 +77,11 @@ const char *reg_to_name[] = {
 	[REG_R15]	= "r15"
 };
 
+#ifdef JIT_FPO
 const int jit_tgt_stack_base_reg = REG_RSP;
+#else
+const int jit_tgt_stack_base_reg = REG_RBP;
+#endif
 
 struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
@@ -288,10 +292,19 @@ jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
 		ts = GET_TMP_STATE(ctx, tmp);
 
 		/* XXX: do properly... */
+#if 0
 		ts->loc = JITLOC_STACK;
 		ts->mem_allocated = 1;
 		ts->mem_base_reg = jit_tgt_stack_base_reg;
 		ts->mem_offset = -i*sizeof(uint64_t);
+#endif
+#if 1
+		ts->loc = JITLOC_REG;
+		ts->mem_allocated = 0;
+		ts->reg = i;
+		jit_regset_set(ctx->regs_used, i);
+		ctx->reg_to_tmp[i] = tmp;
+#endif
 	}
 }
 
@@ -302,9 +315,12 @@ jit_tgt_ctx_init(jit_ctx_t ctx)
 	jit_regset_empty(ctx->overall_choice);
 	jit_regset_set(ctx->overall_choice, REG_RAX);
 	jit_regset_set(ctx->overall_choice, REG_RCX);
-#if 0
+#if 1
 	jit_regset_set(ctx->overall_choice, REG_RDX);
 	jit_regset_set(ctx->overall_choice, REG_RBX);
+#ifdef JIT_FPO
+	jit_regset_set(ctx->overall_choice, REG_RBP);
+#endif
 	jit_regset_set(ctx->overall_choice, REG_RSI);
 	jit_regset_set(ctx->overall_choice, REG_RDI);
 	jit_regset_set(ctx->overall_choice, REG_R8);
