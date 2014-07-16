@@ -91,6 +91,75 @@ struct jit_op_def const op_def[] = {
 
 static
 void
+_jit_label_resize(jit_label_t label)
+{
+	label->max_relocs += 16;
+	label->relocs = realloc(label->relocs,
+	    label->max_relocs * sizeof(struct jit_reloc));
+
+	assert(label->relocs != NULL);
+}
+
+jit_label_t
+jit_new_label(jit_ctx_t ctx)
+{
+	int label_idx;
+
+	if (ctx->label_cnt == ctx->labels_sz) {
+		ctx->labels_sz += 16;
+		ctx->labels = realloc(ctx->labels,
+		    ctx->labels_sz * sizeof(struct jit_label));
+
+		assert(ctx->labels != NULL);
+	}
+
+	label_idx = ctx->label_cnt++;
+
+	ctx->labels[label_idx].id = label_idx;
+	ctx->labels[label_idx].has_target = 0;
+	ctx->labels[label_idx].reloc_count = 0;
+	ctx->labels[label_idx].max_relocs = 0;
+	ctx->labels[label_idx].relocs = NULL;
+
+	_jit_label_resize(&ctx->labels[label_idx]);
+
+	return &ctx->labels[label_idx];
+}
+
+static
+void
+jit_label_set_target(jit_label_t label, jit_bb_t bb)
+{
+	label->has_target = 1;
+	label->target = bb;
+}
+
+static
+void
+jit_label_uninit(jit_label_t label)
+{
+	free(label->relocs);
+}
+
+static
+void
+jit_label_add_reloc(jit_label_t label, jit_bb_t bb)
+{
+	jit_reloc_t reloc;
+
+	assert(label->reloc_count < label->max_relocs);
+	reloc = &label->relocs[label->reloc_count++];
+
+	if (label->reloc_count == label->max_relocs)
+		_jit_label_resize(label);
+
+	reloc->bb = bb;
+}
+
+
+
+static
+void
 dump_regs(jit_ctx_t ctx)
 {
 	int reg;
@@ -274,6 +343,21 @@ jit_pin_local_tmp(jit_ctx_t ctx, jit_tmp_t tmp)
 }
 
 static
+void
+_add_new_link(jit_bb_links_t links, jit_bb_t bb)
+{
+	if (links->cnt == links->sz) {
+		links->sz += 4;
+
+		links->bbs = realloc(links->bbs,
+		    links->sz * sizeof(jit_bb_t));
+		assert (links->bbs != NULL);
+	}
+
+	links->bbs[links->cnt++] = bb;
+}
+
+static
 inline
 jit_bb_t
 _cur_block(jit_ctx_t ctx)
@@ -295,7 +379,12 @@ _cur_block(jit_ctx_t ctx)
 		bb->tmp_idx_last = -1;
 		bb->opc_ptr = &bb->opcodes[0];
 		bb->param_ptr = &bb->params[0];
+		bb->id = ctx->block_cnt;
 		++ctx->block_cnt;
+
+		bb->in_links.cnt = bb->in_links.sz = 0;
+		bb->out_links.cnt = bb->out_links.sz = 0;
+		bb->in_links.bbs = bb->out_links.bbs = NULL;
 	}
 
 	return &ctx->blocks[ctx->cur_block];
@@ -565,6 +654,8 @@ jit_emit_branch(jit_ctx_t ctx, jit_label_t l)
 	jit_bb_t bb = _cur_block(ctx);
 
 	jit_emitv(ctx, JITOP_BRANCH, JITOP_DW_64, "l", l);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -577,6 +668,8 @@ jit_emit_bcmp(jit_ctx_t ctx, jit_label_t l, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t
 	int dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BCMP, JITOP_DW_64, "lcrr", l, dw, cc, r1, r2);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -588,6 +681,8 @@ jit_emit_bcmpi(jit_ctx_t ctx, jit_label_t l, jit_cc_t cc, jit_tmp_t r1, uint64_t
 	int dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BCMP, JITOP_DW_64, "lcri", l, dw, cc, r1, imm);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -600,6 +695,8 @@ jit_emit_bncmp(jit_ctx_t ctx, jit_label_t l, jit_cc_t cc, jit_tmp_t r1, jit_tmp_
 	int dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BNCMP, JITOP_DW_64, "lcrr", l, dw, cc, r1, r2);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -611,6 +708,8 @@ jit_emit_bncmpi(jit_ctx_t ctx, jit_label_t l, jit_cc_t cc, jit_tmp_t r1, uint64_
 	int dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BNCMPI, JITOP_DW_64, "lcri", l, dw, cc, r1, imm);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -623,6 +722,8 @@ jit_emit_btest(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, jit_tmp_t r2)
 	int dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BTEST, dw, "lrr", l, r1, r2);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -634,6 +735,8 @@ jit_emit_btesti(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, uint64_t imm)
 	int dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BTESTI, dw, "lri", l, r1, imm);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -646,6 +749,8 @@ jit_emit_bntest(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, jit_tmp_t r2)
 	int dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BNTEST, dw, "lrr", l, r1, r2);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -657,6 +762,8 @@ jit_emit_bntesti(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, uint64_t imm)
 	int dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_BNTESTI, dw, "lri", l, r1, imm);
+
+	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
@@ -745,8 +852,11 @@ jit_emit_set_label(jit_ctx_t ctx, jit_label_t l)
 	 */
 	if (bb->opc_cnt > 0)
 		_end_bb(ctx);
+	bb = _cur_block(ctx);
 
 	jit_emitv(ctx, JITOP_SET_LABEL, JITOP_DW_64, "l", l);
+
+	jit_label_set_target(l, bb);
 }
 
 
@@ -784,6 +894,7 @@ jit_emit_fn_prologue(jit_ctx_t ctx, const char *fmt, ...)
 
 	*bb->opc_ptr++ = JITOP(JITOP_FN_PROLOGUE, JITOP_DW_64, JITOP_DW_64);
 	++bb->opc_cnt;
+	_end_bb(ctx);
 }
 
 void
@@ -794,6 +905,8 @@ jit_emit_ret(jit_ctx_t ctx, jit_tmp_t r1)
 	int dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_RET, dw, "r", r1);
+
+	_end_bb(ctx);
 }
 
 void
@@ -801,7 +914,9 @@ jit_emit_reti(jit_ctx_t ctx, uint64_t imm)
 {
 	jit_bb_t bb = _cur_block(ctx);
 
-	jit_emitv(ctx, JITOP_RET, JITOP_DW_64, "i", imm);
+	jit_emitv(ctx, JITOP_RETI, JITOP_DW_64, "i", imm);
+
+	_end_bb(ctx);
 }
 #if 0
 static
@@ -887,91 +1002,6 @@ jit_emit64(jit_codebuf_t code, uint32_t u64)
 	code->code_sz += 8;
 }
 #endif
-
-#if 0
-static
-void
-_jit_label_resize(jit_label_t label)
-{
-	label->max_relocs += 16;
-	label->relocs = realloc(label->relocs,
-	    label->max_relocs * sizeof(struct jit_reloc));
-
-	assert(label->relocs != NULL);
-}
-
-int
-jit_label_init(jit_codebuf_t code)
-{
-	int label_idx;
-
-	if (code->label_count == code->max_labels) {
-		code->max_labels += 16;
-		code->labels = realloc(code->labels,
-		    code->max_labels * sizeof(struct jit_label));
-
-		assert(code->labels != NULL);
-	}
-
-	label_idx = code->label_count++;
-
-	code->labels[label_idx].has_target = 0;
-	code->labels[label_idx].reloc_count = 0;
-	code->labels[label_idx].max_relocs = 0;
-	code->labels[label_idx].relocs = NULL;
-
-	_jit_label_resize(&code->labels[label_idx]);
-
-	return label_idx;
-}
-
-static
-void
-jit_label_uninit(jit_codebuf_t code, int label_idx)
-{
-	jit_label_t label;
-
-	assert(label_idx < code->label_count);
-	label = &code->labels[label_idx];
-
-	free(label->relocs);
-}
-
-uintptr_t
-jit_label_get_target(jit_codebuf_t code, int label_idx)
-{
-	jit_label_t label;
-
-	assert(label_idx < code->label_count);
-	label = &code->labels[label_idx];
-
-	if (label->has_target) {
-		return label->target;
-	} else {
-		return UINTPTR_MAX;
-	}
-}
-
-static
-void
-jit_label_add_reloc(jit_codebuf_t code, int label_idx)
-{
-	jit_label_t label;
-	jit_reloc_t reloc;
-
-	assert(label_idx < code->label_count);
-	label = &code->labels[label_idx];
-
-	assert(label->reloc_count < label->max_relocs);
-	reloc = &label->relocs[label->reloc_count++];
-
-	if (label->reloc_count == label->max_relocs)
-		_jit_label_resize(label);
-
-	reloc->code_ptr = code->code_ptr;
-}
-#endif
-
 #if 0
 void
 jit_label_set_target(jit_codebuf_t code, int label_idx, uintptr_t abs_dst)
@@ -1249,7 +1279,8 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 						printf(", ");
 					}
 				}
-
+			}
+			if (def->in_args > 0) {
 				for (iidx = 0; iidx < def->in_args; iidx++) {
 					if (def->out_args != 0 || iidx > 0) {
 						printf(", ");
@@ -1304,6 +1335,7 @@ jit_print_ir(jit_ctx_t ctx)
 	int i;
 
 	for (i = 0; i < ctx->block_cnt; i++) {
+		printf("<%d>\n", ctx->blocks[i].id);
 		jit_print_bb(ctx, &ctx->blocks[i]);
 	}
 }
@@ -1875,4 +1907,76 @@ jit_process(jit_ctx_t ctx)
 	for (i = 0; i < ctx->block_cnt; i++) {
 		process_bb(ctx, &ctx->blocks[i]);
 	}
+}
+
+void
+jit_resolve_links(jit_ctx_t ctx)
+{
+	int i, j;
+	int last_block = ctx->block_cnt-1;
+	jit_bb_t bb = NULL;
+	jit_bb_t bb_prev = NULL;
+	jit_label_t label;
+	jit_reloc_t reloc;
+
+	for (i = 0; i < ctx->block_cnt; i++) {
+		bb = &ctx->blocks[i];
+
+		if (bb->opc_cnt == 0)
+			continue;
+
+		if (bb_prev) {
+			if (bb_prev->opc_cnt >= 1 && bb_prev->opc_ptr[-1] != JITOP_BRANCH && bb_prev->opc_ptr[-1] != JITOP_RET && bb_prev->opc_ptr[-1] != JITOP_RETI) {
+				_add_new_link(&bb->in_links, bb_prev);
+				_add_new_link(&bb_prev->out_links, bb);
+			}
+		}
+
+		bb_prev = bb;
+	}
+
+	for (i = 0; i < ctx->label_cnt; i++) {
+		label = &ctx->labels[i];
+
+		if (label->reloc_count && !label->has_target) {
+			printf("WARNING: label with relocations but without target found!\n");
+			continue;
+		}
+
+		bb = label->target;
+
+		for (j = 0; j < label->reloc_count; j++) {
+			reloc = &label->relocs[j];
+			_add_new_link(&bb->in_links, reloc->bb);
+			_add_new_link(&reloc->bb->out_links, bb);
+		}
+	}
+}
+
+int
+jit_output_cfg(jit_ctx_t ctx, const char *file)
+{
+	int i, j;
+	jit_bb_t bb, linked_bb;
+	FILE *fp;
+
+	fp = fopen(file, "w");
+	if (fp == NULL)
+		return -1;
+
+	fprintf(fp, "digraph CFG {\n");
+	for (i = 0; i < ctx->block_cnt; i++) {
+		bb = &ctx->blocks[i];
+
+		if (bb->out_links.cnt > 0) {
+			for (j = 0; j < bb->out_links.cnt; j++) {
+				linked_bb = bb->out_links.bbs[j];
+				fprintf(fp, "\t%d -> %d;\n", bb->id, linked_bb->id);
+			}
+		}
+	}
+	fprintf(fp, "}\n");
+
+	fclose(fp);
+	return 0;
 }

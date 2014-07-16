@@ -106,38 +106,6 @@ typedef enum {
 #define REG_R14			0xE
 #define REG_R15			0xF
 #endif
-
-typedef struct jit_reloc
-{
-	void		*code_ptr;
-} *jit_reloc_t;
-
-typedef struct jit_label
-{
-	int		id;
-
-	int		has_target;
-	uintptr_t	target;
-
-	int		reloc_count;
-	int		max_relocs;
-	jit_reloc_t relocs;
-} *jit_label_t;
-
-typedef struct jit_codebuf
-{
-	void		*start_ptr;
-	size_t		buf_sz;
-
-	uint8_t		*code_ptr;
-	size_t		code_sz;
-
-	int		label_count;
-	int		max_labels;
-	jit_label_t	labels;
-} *jit_codebuf_t;
-
-
 typedef enum {
 	JITOP_AND = 0,
 	JITOP_ANDI,
@@ -265,6 +233,9 @@ typedef struct jit_tmp_state {
 	struct jit_tmp_out_scan	out_scan;
 } *jit_tmp_state_t;
 
+
+
+
 struct jit_ctx;
 
 typedef uint32_t jit_tmp_t;
@@ -300,10 +271,20 @@ typedef uint64_t jit_regset_t;
     ((JIT_TMP_IS_LOCAL(t)) ? &ctx->local_tmps[JIT_TMP_INDEX(t)] :	\
      &ctx->bb_tmps[JIT_TMP_INDEX(t)])
 
+struct jit_bb;
+
+typedef struct jit_bb_links
+{
+	int		cnt;
+	int		sz;
+	struct jit_bb	**bbs;
+} *jit_bb_links_t;
 
 /* Basic block, ending at branch or label */
 typedef struct jit_bb
 {
+	int		id;
+
 	struct jit_ctx	*ctx;
 	uint32_t	opcodes[1024];
 	uint64_t	params[3192];
@@ -311,6 +292,9 @@ typedef struct jit_bb
 	uint64_t	*param_ptr;
 
 	int		opc_cnt;
+
+	struct jit_bb_links in_links;
+	struct jit_bb_links out_links;
 
 	/* XXX: fill these out... */
 	int		tmp_idx_1st;
@@ -327,6 +311,25 @@ typedef struct jit_bb
     do {						\
 	    (ctx)->regs_used &= ~(1UL << regno);	\
     } while (0)
+
+typedef struct jit_reloc
+{
+	jit_bb_t	bb;
+} *jit_reloc_t;
+
+
+typedef struct jit_label
+{
+	int		id;
+
+	int		has_target;
+	jit_bb_t	target;
+
+	int		reloc_count;
+	int		max_relocs;
+	jit_reloc_t	relocs;
+} *jit_label_t;
+
 
 
 /*
@@ -360,6 +363,11 @@ typedef struct jit_ctx
 	int		block_cnt;
 	int		blocks_sz;
 	jit_bb_t	blocks;
+
+	struct jit_label *labels;
+	int		label_cnt;
+	int		labels_sz;
+
 
 	uint8_t		*code_buf;
 	size_t		code_buf_sz;
@@ -450,10 +458,13 @@ jit_tmp_t jit_new_tmp64(jit_ctx_t ctx);
 jit_tmp_t jit_new_tmp32(jit_ctx_t ctx);
 jit_tmp_t jit_new_local_tmp64(jit_ctx_t ctx);
 jit_tmp_t jit_new_local_tmp32(jit_ctx_t ctx);
+jit_label_t jit_new_label(jit_ctx_t ctx);
 
 void jit_print_ir(jit_ctx_t ctx);
 void jit_optimize(jit_ctx_t ctx);
 void jit_process(jit_ctx_t ctx);
+void jit_resolve_links(jit_ctx_t ctx);
+int jit_output_cfg(jit_ctx_t ctx, const char *file);
 
 /* XXX: force the specified tmp to always be in a register (nessarily always the same reg) */
 void jit_pin_local_tmp(jit_ctx_t ctx, jit_tmp_t tmp);
