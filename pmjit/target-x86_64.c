@@ -59,7 +59,7 @@ typedef enum {
 	REG_R15
 } x86_reg;
 
-const char *reg_to_name[] = {
+static const char *reg_to_name[] = {
 	[REG_RAX]	= "rax",
 	[REG_RCX]	= "rcx",
 	[REG_RDX]	= "rdx",
@@ -77,6 +77,26 @@ const char *reg_to_name[] = {
 	[REG_R14]	= "r14",
 	[REG_R15]	= "r15"
 };
+
+static const int reg_empty_weight[] = {
+	[REG_RAX]	= 1,
+	[REG_RCX]	= 1,
+	[REG_RDX]	= 1,
+	[REG_RBX]	= 0,
+	[REG_RSP]	= 1,
+	[REG_RBP]	= 0,
+	[REG_RSI]	= 1,
+	[REG_RDI]	= 1,
+	[REG_R8]	= 1,
+	[REG_R9]	= 1,
+	[REG_R10]	= 1,
+	[REG_R11]	= 1,
+	[REG_R12]	= 0,
+	[REG_R13]	= 0,
+	[REG_R14]	= 0,
+	[REG_R15]	= 0
+};
+
 
 #ifdef JIT_FPO
 const int jit_tgt_stack_base_reg = REG_RSP;
@@ -186,6 +206,12 @@ struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 	/* BSF/BSR r32/64, r/m32/64 */
 };
+
+int
+jit_tgt_reg_empty_weight(jit_ctx_t ctx, int reg)
+{
+	return reg_empty_weight[reg];
+}
 
 static
 int

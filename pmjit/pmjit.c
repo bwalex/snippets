@@ -1286,6 +1286,8 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 	jit_tmp_state_t ts;
 	int max_weight = -1;
 	int max_weight_reg = 0;
+	int max_empty_weight = -1;
+	int max_empty_weight_reg = 0;
 	int weight;
 	int found_empty = 0;
 
@@ -1302,7 +1304,12 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 		 */
 		if (!jit_regset_test(ctx->regs_used, reg)) {
 			found_empty = 1;
-			break;
+			weight = jit_tgt_reg_empty_weight(ctx, reg);
+			if (weight > max_empty_weight) {
+				max_empty_weight = weight;
+				max_empty_weight_reg = reg;
+			}
+			continue;
 		}
 
 		tmp = ctx->reg_to_tmp[reg];
@@ -1322,7 +1329,9 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 #endif
 
 	printf("  -> found_empty? %d\n", found_empty);
-	if (!found_empty) {
+	if (found_empty) {
+		reg = max_empty_weight_reg;
+	} else {
 		reg = max_weight_reg;
 		tmp = ctx->reg_to_tmp[reg];
 		ts = GET_TMP_STATE(ctx, tmp);
