@@ -86,10 +86,10 @@ struct jit_op_def const op_def[] = {
 	[JITOP_CSET]	= { .mnemonic = "cset",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "crr"   },
 	[JITOP_CSETI]	= { .mnemonic = "cseti",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "cri"   },
 	[JITOP_NOP]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 0, .fmt = "" },
-	[JITOP_NOP1]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 1, .fmt = "" },
+	[JITOP_NOP1]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 1, .fmt = "i" },
 	[JITOP_NOPN]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = -1, .fmt = "" },
 	[JITOP_SET_LABEL] = { .mnemonic = "set_label", .side_effects = 1, .save_locals = SAVE_NEVER, .out_args = 0, .in_args = 1, .fmt = "l" },
-	[JITOP_FN_PROLOGUE] = { .mnemonic = "nop", .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = -1, .in_args = 0, .fmt = "" }
+	[JITOP_FN_PROLOGUE] = { .mnemonic = "fn_prologue", .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = -1, .in_args = 0, .fmt = "" }
 };
 
 
@@ -177,7 +177,7 @@ dump_regs(jit_ctx_t ctx)
 			tmp = ctx->reg_to_tmp[reg];
 			ts = GET_TMP_STATE(ctx, tmp);
 
-			printf("  %.2d -> %c%d", reg, ts->local?'l':'t', ts->id);
+			printf("  %.2d -> %c%d", reg, JIT_TMP_IS_LOCAL(tmp)?'l':'t', ts->id);
 			for (use = ts->scan.use_head; use != NULL; use = use->next) {
 				printf(" %d{%d}", use->use_idx, use->generation);
 			}
@@ -1041,6 +1041,8 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 				}
 			}
 			if (def->in_args > 0) {
+				if (def->out_args == 0)
+					printf("\t");
 				for (iidx = 0; iidx < def->in_args; iidx++) {
 					if (def->out_args != 0 || iidx > 0) {
 						printf(", ");
