@@ -37,6 +37,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include "pmjit.h"
+#include "pmjit-internal.h"
 #include "pmjit-tgt.h"
 
 typedef enum {
@@ -302,6 +303,7 @@ jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
 		ts->loc = JITLOC_REG;
 		ts->mem_allocated = 0;
 		ts->reg = i;
+		ts->dirty = 1;
 		jit_regset_set(ctx->regs_used, i);
 		ctx->reg_to_tmp[i] = tmp;
 #endif
