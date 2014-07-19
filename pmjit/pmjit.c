@@ -246,6 +246,31 @@ tmp_add_use(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx)
 }
 
 static
+void
+tmp_del_use(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_use_t use;
+
+	for (use = ts->scan.use_head; use != NULL; use = use->next) {
+		if (use->use_idx != use_idx || use->bb_id != bb->id)
+			continue;
+
+		if (use->prev == NULL)
+			ts->scan.use_head = use->next;
+		else
+			use->prev->next = use->next;
+
+		if (use->next == NULL)
+			ts->scan.use_tail = use->prev;
+		else
+			use->next->prev = use->prev;
+
+		break;
+	}
+}
+
+static
 int
 tmp_is_dead(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp)
 {
@@ -1565,8 +1590,9 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 static
 void
 bb_remove_dead(jit_ctx_t ctx, jit_bb_t bb) {
+	const char *fmt;
 	int opc_idx = 0;
-	int opparam_idx = 0;
+	int opparam_idx = (bb->param_ptr - bb->params);
 	int cnt;
 	int i;
 	int dead;
@@ -1575,44 +1601,58 @@ bb_remove_dead(jit_ctx_t ctx, jit_bb_t bb) {
 	jit_tmp_t tmp;
 	jit_tmp_state_t ts;
 
-	while (opc_idx < bb->opc_cnt) {
+	for (opc_idx = bb->opc_cnt-1; opc_idx >= 0; opc_idx--) {
 		opc = bb->opcodes[opc_idx];
+		def = &op_def[JITOP_OP(opc)];
+		fmt = def->fmt;
+
+		cnt = def->in_args + def->out_args;
+		if (def->in_args < 0 || def->out_args < 0) {
+			cnt = bb->params[opparam_idx-1]+2;
+		}
+
+		opparam_idx -= cnt;
 
 		switch (JITOP_OP(opc)) {
 		case JITOP_FN_PROLOGUE:
 		case JITOP_NOPN:
 			dead = 0;
-			cnt = 2 + bb->params[opparam_idx];
 			break;
 
 		case JITOP_NOP1:
 			dead = 0;
-			cnt = 1;
 			break;
 
 		case JITOP_NOP:
 			dead = 0;
-			cnt = 0;
 			break;
 
 		default:
-			def = &op_def[JITOP_OP(opc)];
-			cnt = def->in_args + def->out_args;
-
 			dead = !def->side_effects;
 			for (i = 0; i < def->out_args; i++) {
 				tmp = bb->params[opparam_idx+i];
 				ts = GET_TMP_STATE(ctx, tmp);
 
-				++ts->out_scan.generation;
-
 				/*
 				 * If the temp is not a local temp, and it's relatively dead,
 				 * then this result is dead.
 				 */
-				if (ts->local ||
-				    !tmp_is_relatively_dead(ctx, bb, tmp, ts->out_scan.generation))
+				if (ts->local || ts->out_scan.mark)
 					dead = 0;
+
+				ts->out_scan.mark = 0;
+			}
+
+			for (i = 0; i < def->in_args; i++) {
+				if (fmt[i] == 'r') {
+					tmp = bb->params[opparam_idx+def->out_args+i];
+					ts = GET_TMP_STATE(ctx, tmp);
+					if (dead) {
+						tmp_del_use(ctx, bb, tmp, opc_idx);
+					} else {
+						ts->out_scan.mark = 1;
+					}
+				}
 			}
 
 			break;
@@ -1630,8 +1670,6 @@ bb_remove_dead(jit_ctx_t ctx, jit_bb_t bb) {
 				bb->params[opparam_idx+cnt-1] = cnt-2;
 			}
 		}
-		opparam_idx += cnt;
-		++opc_idx;
 	}
 }
 
@@ -1776,9 +1814,8 @@ jit_optimize(jit_ctx_t ctx)
 		downgrade_locals(ctx);
 	}
 
-	zero_scan(ctx);
-
 	for (i = 0; i < ctx->block_cnt; i++) {
+		zero_scan(ctx);
 		bb_remove_dead(ctx, &ctx->blocks[i]);
 	}
 

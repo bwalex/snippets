@@ -53,6 +53,7 @@ typedef struct jit_tmp_scan {
 typedef struct jit_tmp_out_scan {
 	int		generation;
 	int		last_used;
+	int		mark;
 } *jit_tmp_out_scan_t;
 
 typedef struct jit_tmp_state {
