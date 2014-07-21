@@ -76,7 +76,10 @@
 #define OPC_SUB_EAX_IMM32	0x2D
 #define OPC_SUB_RM_IMM8		0x83
 
-
+#define OPC_ZEROF_PREFIX	0x0F
+#define OPC_BSWAP_REG		0xC8
+#define OPC_BSF_REG		0xBC
+#define OPC_BSR_REG		0xBD
 
 #define OPC_CMP_REG_RM		0x3B
 #define OPC_CMP_RM_REG		0x39
@@ -370,24 +373,24 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg, u
 		use_disp = 1;
 
 	if (rip_relative)
-		mod = 0x0;
+		mod = MODRM_MOD_DISP0;
 	else if (use_sib && !use_disp)
-		mod = 0x0;
+		mod = MODRM_MOD_DISP0;
 	else if (!use_sib && (disp == 0)) {
 		if (reg_base == REG_RBP ||
 		    reg_base == REG_R13) {
-			mod = 0x01;
+			mod = MODRM_MOD_DISP1B;
 			use_disp8 = 1;
 			use_disp = 1;
 			disp8 = 0;
 		} else {
-			mod = 0x0;
+			mod = MODRM_MOD_DISP0;
 		}
 	}
 	else if (use_disp8)
-		mod = 0x1;
+		mod = MODRM_MOD_DISP1B;
 	else
-		mod = 0x2;
+		mod = MODRM_MOD_DISP4B;
 
 	reg &= 0x7;
 	if (!no_base)
@@ -539,6 +542,33 @@ jit_emit_pop_reg(jit_codebuf_t code, uint8_t reg)
 }
 
 void
+jit_emit_bswap_reg(jit_codebuf_t code, int w64, uint8_t reg)
+{
+	int reg_ext = reg & 0x8;
+
+	reg &= 0x7;
+
+	if (reg_ext || w64)
+		jit_emit_rex(code, w64, reg_ext, 0, 0);
+
+	jit_emit8(code, OPC_ZEROF_PREFIX);
+	jit_emit8(code, OPC_BSWAP_REG + reg);
+}
+
+void
+jit_emit_clz_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
+{
+	int reg_ext = reg & 0x8;
+	int rm_ext = rm_reg & 0x8;
+
+	reg &= 0x7;
+	rm_reg &= 0x7;
+	/* XXX: deal with ZF */
+	/* XXX: convert from index-of-MSB1 to leading-zeroes */
+	/* XXX: this is just plain wrong */
+}
+
+void
 jit_emit_shift_reg_imm8(jit_codebuf_t code, int w64, int left, uint8_t rm_reg, int amt)
 {
 	jit_emit_opc1_reg_regrm(code, w64, OPC_SHIFT_RM_IMM,
@@ -675,23 +705,10 @@ jit_emit_ret_(jit_ctx_t ctx, jit_codebuf_t code)
 {
 	x86_ctx_t x86_ctx = (x86_ctx_t)ctx->tgt_ctx;
 
-#if 0
-	int i, saved_reg;
-
-	for (i = 0; i < CALLEE_SAVED_REG_CNT; i++) {
-		saved_reg = callee_saved_regs[i];
-		if (!jit_regset_test(ctx->regs_ever_used, saved_reg))
-			continue;
-
-		/* mov -(i*8)(%rbp), %saved_reg */
-		jit_emit_opc1_reg_memrm(ctx->codebuf, 1, OPC_MOV_REG_RM, saved_reg,
-					REG_RBP, NO_REG, 0, -i*8, 0);
-	}
-
-	jit_emit8(code, OPC_LEAVE);
-	jit_emit8(code, OPC_RET);
-#endif
-
+	/*
+	 * The actual epilogue will be emitted later, whenever we know
+	 * which callee-saved registers actually need to be restored.
+	 */
 	if (x86_ctx->epilogues_cnt == x86_ctx->epilogues_sz) {
 		x86_ctx->epilogues_sz += 4;
 		x86_ctx->epilogues = realloc(x86_ctx->epilogues,
