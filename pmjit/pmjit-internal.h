@@ -154,7 +154,13 @@ struct jit_ctx
 	jit_tmp_t	reg_to_tmp[64];
 	jit_regset_t	overall_choice;
 
+	jit_regset_t	regs_ever_used;
+
 	int32_t		spill_stack_offset;
+
+	void		*tgt_ctx;
+
+	struct jit_codebuf *codebuf;
 };
 
 #define JITOP_DW_8	0x00
@@ -222,7 +228,10 @@ struct jit_ctx
 #define CAN_FAIL	0x01
 
 
-
+#define _ALIGN_SZ(sz, align_sz)				\
+	(((sz) % (align_sz) != 0) ?			\
+	    ((align_sz) + (sz) - ((sz) % (align_sz))) : \
+	     (sz))
 
 
 
@@ -293,88 +302,7 @@ struct jit_ctx
 #endif
 
 #if 0
-static
-int
-jit_jmp_cc_disp(jit_cmptype_t c)
-{
-	switch (c) {
-	case CMP_GE:
-		return 13;
-	case CMP_LE:
-		return 14;
-	case CMP_NE:
-		return 5;
-	case CMP_EQ:
-		return 4;
-	case CMP_GT:
-		return 15;
-	case CMP_LT:
-		return 12;
-	default:
-		return 0;
-	}
-}
 
-static
-void
-jit_emit32_at(uint8_t * buf, uint32_t u32)
-{
-	*buf++ = (u32 >> 0) & 0xff;
-	*buf++ = (u32 >> 8) & 0xff;
-	*buf++ = (u32 >> 16) & 0xff;
-	*buf++ = (u32 >> 24) & 0xff;
-}
-
-static
-void
-jit_emit64_at(uint8_t * buf, uint64_t u64)
-{
-	*buf++ = (u64 >> 0) & 0xff;
-	*buf++ = (u64 >> 8) & 0xff;
-	*buf++ = (u64 >> 16) & 0xff;
-	*buf++ = (u64 >> 24) & 0xff;
-	*buf++ = (u64 >> 32) & 0xff;
-	*buf++ = (u64 >> 40) & 0xff;
-	*buf++ = (u64 >> 48) & 0xff;
-	*buf++ = (u64 >> 56) & 0xff;
-}
-
-void
-jit_emit8(jit_codebuf_t code, uint8_t u8)
-{
-	assert(code->code_sz + 1 <= code->buf_sz);
-
-	*code->code_ptr++ = u8;
-	code->code_sz += 1;
-}
-
-void
-jit_emit32(jit_codebuf_t code, uint32_t u32)
-{
-	assert(code->code_sz + 4 <= code->buf_sz);
-
-	*code->code_ptr++ = (u32 >> 0) & 0xff;
-	*code->code_ptr++ = (u32 >> 8) & 0xff;
-	*code->code_ptr++ = (u32 >> 16) & 0xff;
-	*code->code_ptr++ = (u32 >> 24) & 0xff;
-	code->code_sz += 4;
-}
-
-void
-jit_emit64(jit_codebuf_t code, uint32_t u64)
-{
-	assert(code->code_sz + 8 <= code->buf_sz);
-
-	*code->code_ptr++ = (u64 >> 0) & 0xff;
-	*code->code_ptr++ = (u64 >> 8) & 0xff;
-	*code->code_ptr++ = (u64 >> 16) & 0xff;
-	*code->code_ptr++ = (u64 >> 24) & 0xff;
-	*code->code_ptr++ = (u64 >> 32) & 0xff;
-	*code->code_ptr++ = (u64 >> 40) & 0xff;
-	*code->code_ptr++ = (u64 >> 48) & 0xff;
-	*code->code_ptr++ = (u64 >> 56) & 0xff;
-	code->code_sz += 8;
-}
 #endif
 #if 0
 void

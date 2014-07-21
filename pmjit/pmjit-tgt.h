@@ -16,6 +16,8 @@ jit_regset_t jit_tgt_reg_restrict(jit_ctx_t ctx, jit_op_t op, char constraint);
 int jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int idx, uint64_t imm);
 int jit_tgt_reg_empty_weight(jit_ctx_t ctx, int reg);
 
+void jit_tgt_ctx_finish_emit(jit_ctx_t ctx);
+
 extern struct jit_tgt_op_def const tgt_op_def[];
 extern const int jit_tgt_stack_base_reg;
 

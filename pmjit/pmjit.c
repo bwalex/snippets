@@ -50,6 +50,8 @@ struct jit_op_def const op_def[] = {
 	[JITOP_XORI]	= { .mnemonic = "xori",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
 	[JITOP_ADD]	= { .mnemonic = "add",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rr"    },
 	[JITOP_ADDI]	= { .mnemonic = "addi",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_SUB]	= { .mnemonic = "sub",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rr"    },
+	[JITOP_SUBI]	= { .mnemonic = "subi",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
 	[JITOP_SHL]	= { .mnemonic = "shl",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rr"    },
 	[JITOP_SHLI]	= { .mnemonic = "shli",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rI"    },
 	[JITOP_SHR]	= { .mnemonic = "shr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rr"    },
@@ -189,6 +191,26 @@ dump_regs(jit_ctx_t ctx)
 	printf("===========================\n\n");
 }
 
+int
+jit_init_codebuf(jit_ctx_t ctx, jit_codebuf_t code)
+{
+	size_t sz = 8192; /* XXX */
+
+	code->code_ptr = mmap(0, sz, PROT_WRITE | PROT_EXEC,
+	    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+	if (code->code_ptr == MAP_FAILED)
+		return -1;
+
+	code->emit_ptr = code->map_ptr = code->code_ptr;
+	code->map_sz = sz;
+	code->code_sz = 0;
+
+	if (ctx != NULL)
+		ctx->codebuf = code;
+
+	return 0;
+}
 
 static
 int
@@ -593,6 +615,27 @@ jit_emit_addi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm)
 	int dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
 
 	jit_emitv(ctx, JITOP_ADDI, ts->w64 ? JITOP_DW_64 : JITOP_DW_32,
+	    "rri", dst, r1, imm);
+}
+
+void
+jit_emit_sub(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2)
+{
+	jit_bb_t bb = _cur_block(ctx);
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, dst);
+	int dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_SUB, dw, "rrr", dst, r1, r2);
+}
+
+void
+jit_emit_subi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm)
+{
+	jit_bb_t bb = _cur_block(ctx);
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, dst);
+	int dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_SUBI, ts->w64 ? JITOP_DW_64 : JITOP_DW_32,
 	    "rri", dst, r1, imm);
 }
 
@@ -1146,7 +1189,7 @@ save_temp(jit_ctx_t ctx, jit_tmp_t tmp)
 		ts->mem_allocated = 1;
 		ts->mem_offset = ctx->spill_stack_offset;
 		ts->mem_base_reg = jit_tgt_stack_base_reg;
-		ctx->spill_stack_offset += sizeof(uint64_t);
+		ctx->spill_stack_offset -= sizeof(uint64_t);
 	}
 
 	if (ts->dirty) {
@@ -1198,7 +1241,7 @@ fill_temp(jit_ctx_t ctx, jit_tmp_t tmp, int reg)
 		ts->mem_allocated = 1;
 		ts->mem_offset = ctx->spill_stack_offset;
 		ts->mem_base_reg = jit_tgt_stack_base_reg;
-		ctx->spill_stack_offset += sizeof(uint64_t);
+		ctx->spill_stack_offset -= sizeof(uint64_t);
 	}
 
 #if 0
@@ -1341,6 +1384,8 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 
 	jit_regset_set(ctx->regs_used, reg);
 	ctx->reg_to_tmp[reg] = tmp_alloc;
+
+	jit_regset_set(ctx->regs_ever_used, reg);
 
 	return reg;
 }
@@ -1490,6 +1535,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 					tparams[idx] = reg;
 					jit_regset_clear(current_choice, reg);
 				} else {
+					jit_regset_set(ctx->regs_ever_used, ts->reg);
 					tparams[idx] = ts->reg;
 					jit_regset_clear(current_choice, ts->reg);
 				}
@@ -1586,6 +1632,8 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		ts->loc = JITLOC_REG;
 		ts->reg = reg;
 		ts->dirty = 1;
+
+		jit_regset_set(ctx->regs_ever_used, reg);
 	}
 
 	/*
@@ -1842,6 +1890,8 @@ jit_process(jit_ctx_t ctx)
 		process_bb(ctx, &ctx->blocks[i]);
 		jit_regset_empty(ctx->regs_used);
 	}
+
+	jit_tgt_ctx_finish_emit(ctx);
 }
 
 void

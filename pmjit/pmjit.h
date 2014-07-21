@@ -51,6 +51,8 @@ typedef enum {
 	JITOP_XORI,
 	JITOP_ADD,
 	JITOP_ADDI,
+	JITOP_SUB,
+	JITOP_SUBI,
 	JITOP_NOT,
 	JITOP_SHL,
 	JITOP_SHLI,
@@ -93,6 +95,15 @@ typedef enum {
 	JITOP_NOPN
 } jit_op_t;
 
+typedef struct jit_codebuf {
+	uint8_t	*code_ptr;
+	size_t	code_sz;
+
+	void	*map_ptr;
+	size_t	map_sz;
+
+	uint8_t	*emit_ptr;
+} *jit_codebuf_t;
 
 struct jit_ctx;
 struct jit_label;
@@ -127,6 +138,8 @@ void jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t hi, uint8_
 /* Data processing: arithmetic */
 void jit_emit_add(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
 void jit_emit_addi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm);
+void jit_emit_sub(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_subi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint64_t imm);
 
 /* Control flow: local branches */
 void jit_emit_branch(jit_ctx_t ctx, jit_label_t label);
@@ -177,6 +190,7 @@ jit_tmp_t jit_new_tmp32(jit_ctx_t ctx);
 jit_tmp_t jit_new_local_tmp64(jit_ctx_t ctx);
 jit_tmp_t jit_new_local_tmp32(jit_ctx_t ctx);
 jit_label_t jit_new_label(jit_ctx_t ctx);
+int jit_init_codebuf(jit_ctx_t ctx, jit_codebuf_t codebuf);
 
 void jit_print_ir(jit_ctx_t ctx);
 void jit_optimize(jit_ctx_t ctx);

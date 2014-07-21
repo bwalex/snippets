@@ -1,5 +1,6 @@
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <fcntl.h>
 #include "pmjit.h"
 
 
@@ -16,8 +18,11 @@ int main(void)
 {
 	jit_ctx_t ctx;
 	jit_tmp_t a, b, c, d, e, f, g;
+	struct jit_codebuf codebuf;
+	int fd;
 
 	ctx = jit_new_ctx();
+	jit_init_codebuf(ctx, &codebuf);
 
 	d = jit_new_tmp64(ctx);
 	e = jit_new_tmp32(ctx);
@@ -42,6 +47,13 @@ int main(void)
 	jit_print_ir(ctx);
 
 	jit_process(ctx);
+
+	fd = open("jit.raw", O_WRONLY | O_CREAT | O_TRUNC);
+	assert (fd > 0);
+
+	write(fd, codebuf.code_ptr, codebuf.code_sz);
+
+	close(fd);
 
 	return 0;
 }
