@@ -1,5 +1,6 @@
 #ifndef _PMJIT_INTERNAL_H_
 #define _PMJIT_INTERNAL_H_
+#include "dyn_array.h"
 
 
 #define SAVE_NORMAL	0
@@ -117,31 +118,19 @@ struct jit_label {
 	int		has_target;
 	jit_bb_t	target;
 
-	int		reloc_count;
-	int		max_relocs;
-	jit_reloc_t	relocs;
+	struct dyn_array	relocs;
 };
 
 struct jit_ctx
 {
-	int		local_tmps_cnt;
-	int		local_tmps_sz;
-	jit_tmp_state_t	local_tmps;
-
-	int		bb_tmps_cnt;
-	int		bb_tmps_sz;
-	jit_tmp_state_t	bb_tmps;
-
+	struct dyn_array	local_tmps;
+	struct dyn_array	bb_tmps;
+	struct dyn_array	labels;
 
 	int		cur_block;
 	int		block_cnt;
 	int		blocks_sz;
 	jit_bb_t	blocks;
-
-	struct jit_label *labels;
-	int		label_cnt;
-	int		labels_sz;
-
 
 	uint8_t		*code_buf;
 	size_t		code_buf_sz;
@@ -168,8 +157,8 @@ struct jit_ctx
 #define JITOP_DW_32	0x02
 #define JITOP_DW_64	0x03
 
-#define JITOP(op, dw, cc_dw)	\
-    (((op) & 0xffff) | (((dw) & 0x3) << 16) | (((cc_dw) & 0x3) << 24))
+#define JITOP(op, dw, op_dw)	\
+    (((op) & 0xffff) | (((dw) & 0x3) << 16) | (((op_dw) & 0x3) << 24))
 
 #define JITOP_OP(opc)	\
     ((opc) & 0xffff)
@@ -177,7 +166,7 @@ struct jit_ctx
 #define JITOP_DW(opc)	\
     (((opc) >> 16) & 0x3)
 
-#define JITOP_CC_DW(opc)	\
+#define JITOP_OP_DW(opc) \
     (((opc) >> 24) & 0x3)
 
 
@@ -207,9 +196,10 @@ struct jit_ctx
  * XXX: GET_TMP_STATE() should check if the tmp is allocated or not in
  *      the first place.
  */
-#define GET_TMP_STATE(ctx, t)						\
-    ((JIT_TMP_IS_LOCAL(t)) ? &ctx->local_tmps[JIT_TMP_INDEX(t)] :	\
-     &ctx->bb_tmps[JIT_TMP_INDEX(t)])
+#define GET_TMP_STATE(ctx, t)					\
+    ((JIT_TMP_IS_LOCAL(t)) ?					\
+     dyn_array_get(&ctx->local_tmps, JIT_TMP_INDEX(t)) :	\
+     dyn_array_get(&ctx->bb_tmps, JIT_TMP_INDEX(t)))
 
 
 

@@ -57,6 +57,7 @@ struct jit_op_def const op_def[] = {
 	[JITOP_SHR]	= { .mnemonic = "shr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rr"    },
 	[JITOP_SHRI]	= { .mnemonic = "shri",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rI"    },
 	[JITOP_MOV]	= { .mnemonic = "mov",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_MOV_SEXT]	= { .mnemonic = "mov.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
 	[JITOP_MOVI]	= { .mnemonic = "movi",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "i"     },
 	[JITOP_NOT]	= { .mnemonic = "not",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
 	[JITOP_BSWAP]	= { .mnemonic = "bswap",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
@@ -66,6 +67,10 @@ struct jit_op_def const op_def[] = {
 	[JITOP_LDRR]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
 	[JITOP_LDRBPO]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
 	[JITOP_LDRBPSO]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "rri"   },
+	[JITOP_LDRI_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "i"     },
+	[JITOP_LDRR_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
+	[JITOP_LDRBPO_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
+	[JITOP_LDRBPSO_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "rri"   },
 	[JITOP_STRI]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 2, .fmt = "ri"    },
 	[JITOP_STRR]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 2, .fmt = "rr"    },
 	[JITOP_STRBPO]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 3, .fmt = "rri"   },
@@ -75,10 +80,10 @@ struct jit_op_def const op_def[] = {
 	[JITOP_BCMPI]	= { .mnemonic = "bcmpi",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcri"  },
 	[JITOP_BNCMP]	= { .mnemonic = "bncmp",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lcrr"  },
 	[JITOP_BNCMPI]	= { .mnemonic = "bncmpi",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lcri"  },
-	[JITOP_BTEST]	= { .mnemonic = "btest",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lrr"   },
-	[JITOP_BTESTI]	= { .mnemonic = "btesti",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lri"   },
-	[JITOP_BNTEST]	= { .mnemonic = "bntest",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lrr"   },
-	[JITOP_BNTESTI]	= { .mnemonic = "bntesti", .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lri"   },
+	[JITOP_BTEST]	= { .mnemonic = "btest",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCrr"   },
+	[JITOP_BTESTI]	= { .mnemonic = "btesti",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCri"   },
+	[JITOP_BNTEST]	= { .mnemonic = "bntest",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCrr"   },
+	[JITOP_BNTESTI]	= { .mnemonic = "bntesti", .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCri"   },
 	[JITOP_RET]	= { .mnemonic = "ret",     .side_effects = 1, .save_locals = SAVE_NEVER,  .out_args = 0, .in_args = 1, .fmt = "r"     },
 	[JITOP_RETI]	= { .mnemonic = "reti",    .side_effects = 1, .save_locals = SAVE_NEVER,  .out_args = 0, .in_args = 1, .fmt = "i"     },
 	[JITOP_CMOV]	= { .mnemonic = "cmov",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 4, .fmt = "rcrr"  },
@@ -87,6 +92,12 @@ struct jit_op_def const op_def[] = {
 	[JITOP_CSELI]	= { .mnemonic = "cseli",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 5, .fmt = "rrcri" },
 	[JITOP_CSET]	= { .mnemonic = "cset",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "crr"   },
 	[JITOP_CSETI]	= { .mnemonic = "cseti",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "cri"   },
+	[JITOP_TMOV]	= { .mnemonic = "tmov",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 4, .fmt = "rCrr"  },
+	[JITOP_TMOVI]	= { .mnemonic = "tmovi",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 4, .fmt = "rCri"  },
+	[JITOP_TSEL]	= { .mnemonic = "tsel",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 5, .fmt = "rrCrr" },
+	[JITOP_TSELI]	= { .mnemonic = "tseli",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 5, .fmt = "rrCri" },
+	[JITOP_TSET]	= { .mnemonic = "tset",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "Crr"   },
+	[JITOP_TSETI]	= { .mnemonic = "tseti",   .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "Cri"   },
 	[JITOP_NOP]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 0, .fmt = "" },
 	[JITOP_NOP1]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 1, .fmt = "i" },
 	[JITOP_NOPN]	= { .mnemonic = "nop",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = -1, .fmt = "" },
@@ -94,42 +105,47 @@ struct jit_op_def const op_def[] = {
 	[JITOP_FN_PROLOGUE] = { .mnemonic = "fn_prologue", .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = -1, .in_args = 0, .fmt = "" }
 };
 
+static
+void
+tmp_state_ctor(void *priv, void *elem)
+{
+	jit_tmp_state_t ts = (jit_tmp_state_t)elem;
+
+	ts->scan.use_head = ts->scan.use_tail = NULL;
+}
 
 static
 void
-_jit_label_resize(jit_label_t label)
+tmp_state_dtor(void *priv, void *elem)
 {
-	label->max_relocs += 16;
-	label->relocs = realloc(label->relocs,
-	    label->max_relocs * sizeof(struct jit_reloc));
+	jit_tmp_state_t ts = (jit_tmp_state_t)elem;
+	/* XXX: free scan stuff, and other dynamic structures */
+}
 
-	assert(label->relocs != NULL);
+static
+void
+label_ctor(void *priv, void *elem)
+{
+	static int id = 0;
+	jit_label_t label = (jit_label_t)elem;
+
+	label->id = id++;
+	dyn_array_init(&label->relocs, sizeof(struct jit_reloc), 8, NULL, NULL, NULL);
+}
+
+static
+void
+label_dtor(void *priv, void *elem)
+{
+	jit_label_t label = (jit_label_t)elem;
+
+	dyn_array_free_all(&label->relocs);
 }
 
 jit_label_t
 jit_new_label(jit_ctx_t ctx)
 {
-	int label_idx;
-
-	if (ctx->label_cnt == ctx->labels_sz) {
-		ctx->labels_sz += 16;
-		ctx->labels = realloc(ctx->labels,
-		    ctx->labels_sz * sizeof(struct jit_label));
-
-		assert(ctx->labels != NULL);
-	}
-
-	label_idx = ctx->label_cnt++;
-
-	ctx->labels[label_idx].id = label_idx;
-	ctx->labels[label_idx].has_target = 0;
-	ctx->labels[label_idx].reloc_count = 0;
-	ctx->labels[label_idx].max_relocs = 0;
-	ctx->labels[label_idx].relocs = NULL;
-
-	_jit_label_resize(&ctx->labels[label_idx]);
-
-	return &ctx->labels[label_idx];
+	return dyn_array_new_elem(&ctx->labels);
 }
 
 static
@@ -142,27 +158,13 @@ jit_label_set_target(jit_label_t label, jit_bb_t bb)
 
 static
 void
-jit_label_uninit(jit_label_t label)
-{
-	free(label->relocs);
-}
-
-static
-void
 jit_label_add_reloc(jit_label_t label, jit_bb_t bb)
 {
 	jit_reloc_t reloc;
 
-	assert(label->reloc_count < label->max_relocs);
-	reloc = &label->relocs[label->reloc_count++];
-
-	if (label->reloc_count == label->max_relocs)
-		_jit_label_resize(label);
-
+	reloc = dyn_array_new_elem(&label->relocs);
 	reloc->bb = bb;
 }
-
-
 
 static
 void
@@ -217,6 +219,13 @@ int
 jit_ctx_init(jit_ctx_t ctx)
 {
 	memset(ctx, 0, sizeof(struct jit_ctx));
+
+	dyn_array_init(&ctx->labels, sizeof(struct jit_label), 4, NULL, label_ctor,
+	    label_dtor);
+	dyn_array_init(&ctx->local_tmps, sizeof(struct jit_tmp_state), 16, NULL,
+	    tmp_state_ctor, tmp_state_dtor);
+	dyn_array_init(&ctx->bb_tmps, sizeof(struct jit_tmp_state), 16, NULL,
+	    tmp_state_ctor, tmp_state_dtor);
 
 	jit_tgt_ctx_init(ctx);
 
@@ -343,35 +352,20 @@ _jit_new_tmp(jit_ctx_t ctx, int local, int constant, int w64)
 {
 	jit_tmp_state_t tmp_state;
 	jit_tmp_t tmp = 0;
+	int idx;
 
 	if (local) {
-		if (ctx->local_tmps_cnt == ctx->local_tmps_sz) {
-			ctx->local_tmps_sz += 8;
-			ctx->local_tmps = realloc(ctx->local_tmps,
-			    ctx->local_tmps_sz * sizeof(struct jit_tmp_state));
-			assert (ctx->local_tmps != NULL);
-		}
-		tmp = JIT_TMP_LOCAL(ctx->local_tmps_cnt++);
-		tmp_state = &ctx->local_tmps[JIT_TMP_INDEX(tmp)];
+		tmp_state = dyn_array_new_elem2(&ctx->local_tmps, &idx);
+		tmp = JIT_TMP_LOCAL(idx);
 	} else {
-		if (ctx->bb_tmps_cnt == ctx->bb_tmps_sz) {
-			ctx->bb_tmps_sz += 12;
-			ctx->bb_tmps = realloc(ctx->bb_tmps,
-			    ctx->bb_tmps_sz * sizeof(struct jit_tmp_state));
-			assert (ctx->bb_tmps != NULL);
-		}
-		tmp = ctx->bb_tmps_cnt++;
-		tmp_state = &ctx->bb_tmps[JIT_TMP_INDEX(tmp)];
+		tmp_state = dyn_array_new_elem2(&ctx->bb_tmps, &idx);
+		tmp = idx;
 	}
 
 	memset(tmp_state, 0, sizeof(struct jit_tmp_state));
 
-	tmp_state->scan.use_head = tmp_state->scan.use_tail = NULL;
-	tmp_state->dirty = 0;
 	tmp_state->local = local;
 	tmp_state->constant = constant;
-	tmp_state->pinned = 0;
-	tmp_state->mem_allocated = 0;
 	tmp_state->w64 = w64;
 	tmp_state->loc = JITLOC_UNALLOCATED;
 	tmp_state->id = JIT_TMP_INDEX(tmp);
@@ -483,7 +477,8 @@ jit_emitv(jit_ctx_t ctx, jit_op_t op, int dw, const char *fmt, ...)
 	jit_tmp_state_t ts;
 	jit_label_t l;
 	jit_cc_t cc;
-	int cc_dw = JITOP_DW_64;
+	jit_test_cc_t tcc;
+	int op_dw = dw;
 	int count = 0;
 	uint64_t u64;
 	jit_tmp_state_t out_ts[4];
@@ -493,6 +488,9 @@ jit_emitv(jit_ctx_t ctx, jit_op_t op, int dw, const char *fmt, ...)
 	va_start(ap, fmt);
 	for (; *fmt != '\0'; fmt++) {
 		switch (*fmt) {
+		case 'o':
+			op_dw = va_arg(ap, int);
+			break;
 		case 'r':
 			t = va_arg(ap, jit_tmp_t);
 			ts = GET_TMP_STATE(ctx, t);
@@ -511,9 +509,14 @@ jit_emitv(jit_ctx_t ctx, jit_op_t op, int dw, const char *fmt, ...)
 			*bb->param_ptr++ = (uint64_t)u64;
 			break;
 		case 'c':
-			cc_dw = va_arg(ap, int);
+			op_dw = va_arg(ap, int);
 			cc = va_arg(ap, jit_cc_t);
 			*bb->param_ptr++ = (uint64_t)cc;
+			break;
+		case 'C':
+			op_dw = va_arg(ap, int);
+			tcc = va_arg(ap, jit_test_cc_t);
+			*bb->param_ptr++ = (uint64_t)tcc;
 			break;
 		case 'l':
 			l = va_arg(ap, jit_label_t);
@@ -530,7 +533,7 @@ jit_emitv(jit_ctx_t ctx, jit_op_t op, int dw, const char *fmt, ...)
 	for (count = 0; count < def->out_args; count++) {
 		++out_ts[count]->scan.generation;
 	}
-	*bb->opc_ptr++ = JITOP(op, dw, cc_dw);
+	*bb->opc_ptr++ = JITOP(op, dw, op_dw);
 	++bb->opc_cnt;
 }
 
@@ -682,13 +685,14 @@ jit_emit_shri(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t imm)
 }
 
 void
-jit_emit_mov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1)
+jit_emit_mov(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r1)
 {
 	jit_bb_t bb = _cur_block(ctx);
 	jit_tmp_state_t ts = GET_TMP_STATE(ctx, r1);
 	int dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = width;
 
-	jit_emitv(ctx, JITOP_MOV, dw, "rr", dst, r1);
+	jit_emitv(ctx, (ext_type == SEXT) ? JITOP_MOV_SEXT : JITOP_MOV, dw, "orr", op_dw, dst, r1);
 }
 
 void
@@ -808,54 +812,54 @@ jit_emit_bncmpi(jit_ctx_t ctx, jit_label_t l, jit_cc_t cc, jit_tmp_t r1, uint64_
 }
 
 void
-jit_emit_btest(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, jit_tmp_t r2)
+jit_emit_btest(jit_ctx_t ctx, jit_label_t l, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2)
 {
 	jit_bb_t bb = _cur_block(ctx);
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
 	int dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_BTEST, dw, "lrr", l, r1, r2);
+	jit_emitv(ctx, JITOP_BTEST, dw, "lCrr", l, dw, cc, r1, r2);
 
 	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
 void
-jit_emit_btesti(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, uint64_t imm)
+jit_emit_btesti(jit_ctx_t ctx, jit_label_t l, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm)
 {
 	jit_bb_t bb = _cur_block(ctx);
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 	int dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_BTESTI, dw, "lri", l, r1, imm);
+	jit_emitv(ctx, JITOP_BTESTI, dw, "lCri", l, dw, cc, r1, imm);
 
 	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
 void
-jit_emit_bntest(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, jit_tmp_t r2)
+jit_emit_bntest(jit_ctx_t ctx, jit_label_t l, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2)
 {
 	jit_bb_t bb = _cur_block(ctx);
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
 	int dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_BNTEST, dw, "lrr", l, r1, r2);
+	jit_emitv(ctx, JITOP_BNTEST, dw, "lCrr", l, dw, cc, r1, r2);
 
 	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
 }
 
 void
-jit_emit_bntesti(jit_ctx_t ctx, jit_label_t l, jit_tmp_t r1, uint64_t imm)
+jit_emit_bntesti(jit_ctx_t ctx, jit_label_t l, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm)
 {
 	jit_bb_t bb = _cur_block(ctx);
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 	int dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_BNTESTI, dw, "lri", l, r1, imm);
+	jit_emitv(ctx, JITOP_BNTESTI, dw, "lCri", l, dw, cc, r1, imm);
 
 	jit_label_add_reloc(l, bb);
 	_end_bb(ctx);
@@ -869,9 +873,9 @@ jit_emit_cmov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_cc_t cc, jit_tmp_
 	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
 
 	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
-	int cc_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_CMOV, dw, "rrcrr", dst, src, cc_dw, cc, r1, r2);
+	jit_emitv(ctx, JITOP_CMOV, dw, "rrcrr", dst, src, op_dw, cc, r1, r2);
 }
 
 void
@@ -881,9 +885,9 @@ jit_emit_cmovi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_cc_t cc, jit_tmp
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 
 	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
-	int cc_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_CMOVI, dw, "rrcri", dst, src, cc_dw, cc, r1, imm);
+	jit_emitv(ctx, JITOP_CMOVI, dw, "rrcri", dst, src, op_dw, cc, r1, imm);
 }
 
 void
@@ -894,9 +898,9 @@ jit_emit_csel(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_
 	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
 
 	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
-	int cc_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_CSEL, dw, "rrrcrr", dst, src1, src2, cc_dw, cc, r1, r2);
+	jit_emitv(ctx, JITOP_CSEL, dw, "rrrcrr", dst, src1, src2, op_dw, cc, r1, r2);
 }
 
 void
@@ -906,9 +910,9 @@ jit_emit_cseli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 
 	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
-	int cc_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_CSELI, dw, "rrrcri", dst, src1, src2, cc_dw, cc, r1, imm);
+	jit_emitv(ctx, JITOP_CSELI, dw, "rrrcri", dst, src1, src2, op_dw, cc, r1, imm);
 }
 
 void
@@ -919,9 +923,9 @@ jit_emit_cset(jit_ctx_t ctx, jit_tmp_t dst, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t
 	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
 
 	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
-	int cc_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_CSET, dw, "rcrr", dst, cc_dw, cc, r1, r2);
+	jit_emitv(ctx, JITOP_CSET, dw, "rcrr", dst, op_dw, cc, r1, r2);
 }
 
 void
@@ -931,10 +935,102 @@ jit_emit_cseti(jit_ctx_t ctx, jit_tmp_t dst, jit_cc_t cc, jit_tmp_t r1, uint64_t
 	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
 
 	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
-	int cc_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_CSETI, dw, "rcri", dst, cc_dw, cc, r1, imm);
+	jit_emitv(ctx, JITOP_CSETI, dw, "rcri", dst, op_dw, cc, r1, imm);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void
+jit_emit_tmov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2)
+{
+	jit_tmp_state_t ts_dst = GET_TMP_STATE(ctx, dst);
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
+	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
+
+	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_TMOV, dw, "rrCrr", dst, src, op_dw, cc, r1, r2);
+}
+
+void
+jit_emit_tmovi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm)
+{
+	jit_tmp_state_t ts_dst = GET_TMP_STATE(ctx, dst);
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
+
+	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_TMOVI, dw, "rrCri", dst, src, op_dw, cc, r1, imm);
+}
+
+void
+jit_emit_tsel(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2)
+{
+	jit_tmp_state_t ts_dst = GET_TMP_STATE(ctx, dst);
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
+	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
+
+	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_TSEL, dw, "rrrCrr", dst, src1, src2, op_dw, cc, r1, r2);
+}
+
+void
+jit_emit_tseli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm)
+{
+	jit_tmp_state_t ts_dst = GET_TMP_STATE(ctx, dst);
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
+
+	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_TSELI, dw, "rrrCri", dst, src1, src2, op_dw, cc, r1, imm);
+}
+
+void
+jit_emit_tset(jit_ctx_t ctx, jit_tmp_t dst, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2)
+{
+	jit_tmp_state_t ts_dst = GET_TMP_STATE(ctx, dst);
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
+	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, r2);
+
+	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64 && ts2->w64) ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_TSET, dw, "rCrr", dst, op_dw, cc, r1, r2);
+}
+
+void
+jit_emit_tseti(jit_ctx_t ctx, jit_tmp_t dst, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm)
+{
+	jit_tmp_state_t ts_dst = GET_TMP_STATE(ctx, dst);
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, r1);
+
+	int dw = (ts_dst->w64) ? JITOP_DW_64 : JITOP_DW_32;
+	int op_dw = (ts1->w64) ? JITOP_DW_64 : JITOP_DW_32;
+
+	jit_emitv(ctx, JITOP_TSETI, dw, "rCri", dst, op_dw, cc, r1, imm);
+}
+
+
+
 
 void
 jit_emit_set_label(jit_ctx_t ctx, jit_label_t l)
@@ -1023,7 +1119,7 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 	int iidx;
 	int oidx;
 	int dw;
-	int cc_dw;
+	int op_dw;
 	uint64_t imm;
 	jit_label_t label;
 	jit_tmp_t tmp;
@@ -1035,7 +1131,7 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 	for (opc_idx = 0; opc_idx < bb->opc_cnt; opc_idx++) {
 		op = JITOP_OP(bb->opcodes[opc_idx]);
 		dw = JITOP_DW(bb->opcodes[opc_idx]);
-		cc_dw = JITOP_CC_DW(bb->opcodes[opc_idx]);
+		op_dw = JITOP_OP_DW(bb->opcodes[opc_idx]);
 
 		switch (op) {
 		case JITOP_LDRI:
@@ -1145,9 +1241,9 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 							     (cc == CMP_EQ) ? "eq" :
 							     (cc == CMP_GT) ? "gt" :
 							     (cc == CMP_LT) ? "lt" : "<unknown cc>");
-						printf(".%s", (cc_dw == JITOP_DW_8 ) ? "8"  :
-			                                      (cc_dw == JITOP_DW_16) ? "16" :
-							      (cc_dw == JITOP_DW_32) ? "32" : "64");
+						printf(".%s", (op_dw == JITOP_DW_8 ) ? "8"  :
+			                                      (op_dw == JITOP_DW_16) ? "16" :
+							      (op_dw == JITOP_DW_32) ? "32" : "64");
 						break;
 					}
 					++param_idx;
@@ -1396,7 +1492,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 {
 	jit_op_t op = JITOP_OP(opc);
 	int dw = JITOP_DW(opc);
-	int cc_dw = JITOP_CC_DW(opc);
+	int op_dw = JITOP_OP_DW(opc);
 	jit_op_def_t def = &op_def[op];
 	jit_tgt_op_def_t tgt_def = &tgt_op_def[op];
 	int idx;
@@ -1447,6 +1543,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		case 'I':
 		case 'l':
 		case 'c':
+		case 'C':
 			/* Always ok - immediate will be trimmed if necessary */
 			break;
 
@@ -1457,7 +1554,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 			 * If not, we need to allocate a register for it and change
 			 * the opcode to the register variant.
 			 */
-			if (!jit_tgt_check_imm(ctx, op, idx, params[idx])) {
+			if (!jit_tgt_check_imm(ctx, op, dw, op_dw, idx, params[idx])) {
 				/* XXX: Allocate a register and emit a movi */
 				/* XXX: data width of movi, XXX: data width of strbpo, ldrbpo */
 				/* XXX: pick register, and spill if needed */
@@ -1639,7 +1736,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 	/*
 	 * Emit actual operation, using the registers we just allocated.
 	 */
-	opc = JITOP(op, dw, cc_dw);
+	opc = JITOP(op, dw, op_dw);
 	jit_tgt_emit(ctx, opc, tparams);
 }
 
@@ -1838,13 +1935,11 @@ zero_scan(jit_ctx_t ctx)
 	jit_tmp_state_t ts;
 	int i;
 
-	for (i = 0; i < ctx->local_tmps_cnt; i++) {
-		ts = &ctx->local_tmps[i];
+	dyn_array_foreach(&ctx->local_tmps, ts) {
 		memset(&ts->out_scan, 0, sizeof(ts->out_scan));
 	}
 
-	for (i = 0; i < ctx->bb_tmps_cnt; i++) {
-		ts = &ctx->bb_tmps[i];
+	dyn_array_foreach(&ctx->bb_tmps, ts) {
 		memset(&ts->out_scan, 0, sizeof(ts->out_scan));
 	}
 }
@@ -1856,8 +1951,7 @@ downgrade_locals(jit_ctx_t ctx)
 	jit_tmp_state_t ts;
 	int i;
 
-	for (i = 0; i < ctx->local_tmps_cnt; i++) {
-		ts = &ctx->local_tmps[i];
+	dyn_array_foreach(&ctx->local_tmps, ts) {
 		ts->local = 0;
 	}
 }
@@ -1920,18 +2014,15 @@ jit_resolve_links(jit_ctx_t ctx)
 		bb_prev = bb;
 	}
 
-	for (i = 0; i < ctx->label_cnt; i++) {
-		label = &ctx->labels[i];
-
-		if (label->reloc_count && !label->has_target) {
+	dyn_array_foreach(&ctx->labels, label) {
+		if (!dyn_array_is_empty(&label->relocs) && !label->has_target) {
 			printf("WARNING: label with relocations but without target found!\n");
 			continue;
 		}
 
 		bb = label->target;
 
-		for (j = 0; j < label->reloc_count; j++) {
-			reloc = &label->relocs[j];
+		dyn_array_foreach(&label->relocs, reloc) {
 			_add_new_link(&bb->in_links, reloc->bb);
 			_add_new_link(&reloc->bb->out_links, bb);
 		}

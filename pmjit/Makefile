@@ -1,7 +1,7 @@
 CFLAGS= -O0 -g3
 LDFLAGS=	-O0 -g3
 
-OBJS=	test.o pmjit.o
+OBJS=	test.o pmjit.o dyn_array.o
 X86OBJS=target-x86_64.o
 
 WARNFLAGS=-Wsystem-headers -Wall -W \

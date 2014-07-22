@@ -34,13 +34,33 @@
 #include <stdint.h>
 
 typedef enum {
+	CMP_EQ,
+	CMP_NE,
+
+	/* unsigned */
+	CMP_AE,
+	CMP_B,
+	CMP_A,
+	CMP_BE,
+
+	/* signed */
+	CMP_LT,
 	CMP_GE,
 	CMP_LE,
-	CMP_NE,
-	CMP_EQ,
-	CMP_GT,
-	CMP_LT
+	CMP_GT
 } jit_cc_t;
+
+typedef enum {
+	TST_Z,
+	TST_NZ,
+	TST_MSB_SET,
+	TST_MSB_CLR
+} jit_test_cc_t;
+
+typedef enum {
+	ZEXT,
+	SEXT
+} jit_ext_type_t;
 
 typedef enum {
 	JITOP_AND = 0,
@@ -60,10 +80,15 @@ typedef enum {
 	JITOP_SHRI,
 	JITOP_MOV,
 	JITOP_MOVI,
+	JITOP_MOV_SEXT,
 	JITOP_LDRI,
 	JITOP_LDRR,
 	JITOP_LDRBPO,
 	JITOP_LDRBPSO,
+	JITOP_LDRI_SEXT,
+	JITOP_LDRR_SEXT,
+	JITOP_LDRBPO_SEXT,
+	JITOP_LDRBPSO_SEXT,
 	JITOP_STRI,
 	JITOP_STRR,
 	JITOP_STRBPO,
@@ -89,6 +114,12 @@ typedef enum {
 	JITOP_CSELI,
 	JITOP_CSET,
 	JITOP_CSETI,
+	JITOP_TMOV,
+	JITOP_TMOVI,
+	JITOP_TSEL,
+	JITOP_TSELI,
+	JITOP_TSET,
+	JITOP_TSETI,
 	JITOP_FN_PROLOGUE,
 	JITOP_NOP,
 	JITOP_NOP1,
@@ -127,7 +158,7 @@ void jit_emit_shr(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);
 void jit_emit_shri(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t imm);
 
 /* Data processing: moves */
-void jit_emit_mov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
+void jit_emit_mov(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r1);
 void jit_emit_movi(jit_ctx_t ctx, jit_tmp_t dst, uint64_t imm);
 
 /* Data processing: misc bitops, etc */
@@ -147,10 +178,10 @@ void jit_emit_bcmp(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, 
 void jit_emit_bcmpi(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
 void jit_emit_bncmp(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
 void jit_emit_bncmpi(jit_ctx_t ctx, jit_label_t label, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
-void jit_emit_btest(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, jit_tmp_t r2);
-void jit_emit_btesti(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, uint64_t imm);
-void jit_emit_bntest(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, jit_tmp_t r2);
-void jit_emit_bntesti(jit_ctx_t ctx, jit_label_t label, jit_tmp_t r1, uint64_t imm);
+void jit_emit_btest(jit_ctx_t ctx, jit_label_t label, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_btesti(jit_ctx_t ctx, jit_label_t label, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_bntest(jit_ctx_t ctx, jit_label_t label, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_bntesti(jit_ctx_t ctx, jit_label_t label, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm);
 void jit_emit_set_label(jit_ctx_t ctx, jit_label_t label);
 
 /* Conditional instructions other than branches */
@@ -161,27 +192,34 @@ void jit_emit_cseli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2
 void jit_emit_cset(jit_ctx_t ctx, jit_tmp_t dst, jit_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
 void jit_emit_cseti(jit_ctx_t ctx, jit_tmp_t dst, jit_cc_t cc, jit_tmp_t r1, uint64_t imm);
 
+void jit_emit_tmov(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_tmovi(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_tsel(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_tseli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm);
+void jit_emit_tset(jit_ctx_t ctx, jit_tmp_t dst, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_tseti(jit_ctx_t ctx, jit_tmp_t dst, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm);
+
 /* XXX: load byte, load halfword, load word, load doubleword */
 /* XXX: and same for store... */
 /* Memory: loads */
 /* r1 <- [r2] */
-void jit_emit_ldr_reg(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r2);
+void jit_emit_ldr_reg(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2);
 /* r1 <- [imm] */
-void jit_emit_ldr_imm(jit_ctx_t ctx, jit_tmp_t dst, uint64_t imm);
+void jit_emit_ldr_imm(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, uint64_t imm);
 /* r1 <- [r2 + imm] */
-void jit_emit_ldr_base_imm(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r2, uint64_t imm);
+void jit_emit_ldr_base_imm(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2, uint64_t imm);
 /* r1 <- [r2 + (r3 << scale)] */
-void jit_emit_ldr_base_sr(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
+void jit_emit_ldr_base_sr(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
 
 /* Memory: stores */
 /* [r2] <- r1 */
-void jit_emit_str_reg(jit_ctx_t ctx, jit_tmp_t r1, jit_tmp_t r2);
+void jit_emit_str_reg(jit_ctx_t ctx, int width, jit_tmp_t r1, jit_tmp_t r2);
 /* [imm] <- r1 */
-void jit_emit_str_imm(jit_ctx_t ctx, jit_tmp_t r1, uint64_t imm);
+void jit_emit_str_imm(jit_ctx_t ctx, int width, jit_tmp_t r1, uint64_t imm);
 /* [r2 + imm] <- r1 */
-void jit_emit_str_base_imm(jit_ctx_t ctx, jit_tmp_t r1, jit_tmp_t r2, uint64_t imm);
+void jit_emit_str_base_imm(jit_ctx_t ctx, int width, jit_tmp_t r1, jit_tmp_t r2, uint64_t imm);
 /* [r2 + (r3 << scale)] <- r1 */
-void jit_emit_str_base_sr(jit_ctx_t ctx, jit_tmp_t r1, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
+void jit_emit_str_base_sr(jit_ctx_t ctx, int width, jit_tmp_t r1, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
 
 jit_ctx_t jit_new_ctx(void);
 void jit_free_ctx(jit_ctx_t ctx);

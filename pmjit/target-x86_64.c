@@ -53,16 +53,19 @@
 #define OPC_XOR_RM_REG		0x31
 #define OPC_XOR_RM_IMM32	0x81
 #define OPC_XOR_EAX_IMM32	0x35
+#define OPC_XOR_RM_IMM8		0x80
 
 #define OPC_AND_REG_RM		0x23
 #define OPC_AND_RM_REG		0x21
 #define OPC_AND_RM_IMM32	0x81
 #define OPC_AND_EAX_IMM32	0x25
+#define OPC_AND_RM_IMM8		0x80
 
 #define OPC_OR_REG_RM		0x0B
 #define OPC_OR_RM_REG		0x09
 #define OPC_OR_RM_IMM32		0x81
 #define OPC_OR_EAX_IMM32	0x0D
+#define OPC_OR_RM_IMM8		0x80
 
 #define OPC_ADD_REG_RM		0x03
 #define OPC_ADD_RM_REG		0x01
@@ -86,6 +89,13 @@
 #define OPC_CMP_RM_IMM32	0x81
 #define OPC_CMP_EAX_IMM32	0x3D
 
+#define OPC_MOVZX8		0xB6
+#define OPC_MOVZX16		0xB7
+
+#define OPC_MOVSX8		0xBE
+#define OPC_MOVSX16		0xBF
+#define OPC_MOVSX32		0x63
+
 #define OPC_NOT_RM		0xF7
 
 #define OPC_SHIFT_RM_IMM	0xC1
@@ -101,9 +111,10 @@
 #define OPC_LEAVE		0xC9
 
 #define OPC_SHIFT_RM_CL		0xD3
+#define OPC_TEST_RM_REG		0x85
 #define OPC_TEST_RM_IMM32	0xF7
-#define MODRM_REG_TEST_IMM	0x00 /* XXX: or 0x01 - what do they mean? */
 #define OPC_TEST_RM_IMM64	0xF7
+#define MODRM_REG_TEST_IMM	0x00 /* XXX: or 0x01 - what do they mean? */
 
 
 /* ModR/M mod field values */
@@ -122,6 +133,7 @@
 #define MODRM_REG_SHR		0x5
 #define MODRM_REG_ADD_IMM	0x0
 #define MODRM_REG_SUB_IMM	0x5
+#define MODRM_REG_NOT		0x2
 
 
 /*
@@ -209,6 +221,18 @@ static const int callee_saved_regs[] = {
 #define CALLEE_SAVED_REG_CNT	(int)((sizeof(callee_saved_regs)/sizeof(int)))
 
 
+static const int fn_arg_regs[] = {
+	REG_RDI,
+	REG_RSI,
+	REG_RDX,
+	REG_RCX,
+	REG_R8,
+	REG_R9
+};
+
+#define FN_ARG_REG_CNT		(int)((sizeof(fn_arg_regs)/sizeof(int)))
+
+
 #ifdef JIT_FPO
 const int jit_tgt_stack_base_reg = REG_RSP;
 #else
@@ -218,23 +242,33 @@ const int jit_tgt_stack_base_reg = REG_RBP;
 
 static
 int
-jit_jmp_cc_disp(jit_cc_t c)
+jit_cmp_cc_disp(jit_cc_t c)
 {
 	switch (c) {
-	case CMP_GE:
-		return 13;
-	case CMP_LE:
-		return 14;
-	case CMP_NE:
-		return 5;
-	case CMP_EQ:
-		return 4;
-	case CMP_GT:
-		return 15;
-	case CMP_LT:
-		return 12;
-	default:
-		return 0;
+	case CMP_EQ: return 4;
+	case CMP_NE: return 5;
+	case CMP_B:  return 2;
+	case CMP_AE: return 3;
+	case CMP_BE: return 6;
+	case CMP_A:  return 7;
+	case CMP_LT: return 12;
+	case CMP_GE: return 13;
+	case CMP_LE: return 14;
+	case CMP_GT: return 15;
+	default:     return 0;
+	}
+}
+
+static
+int
+jit_test_cc_disp(jit_test_cc_t c)
+{
+	switch (c) {
+	case TST_Z:       return 4;
+	case TST_NZ:      return 5;
+	case TST_MSB_SET: return 8;
+	case TST_MSB_CLR: return 9;
+	default:          return 0;
 	}
 }
 
@@ -338,7 +372,7 @@ jit_emit_sib(jit_codebuf_t code, int scale_factor, uint8_t index, uint8_t base)
 
 static
 void
-jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
+jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, uint8_t opc, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
 {
 	int no_base = (reg_base == NO_REG);
 	int no_index = (reg_index == NO_REG);
@@ -412,6 +446,9 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg, u
 	if (w64 || reg_ext || base_ext || index_ext)
 		jit_emit_rex(code, w64, reg_ext, index_ext, base_ext);
 
+	if (zerof_prefix)
+		jit_emit8(code, OPC_ZEROF_PREFIX);
+
 	jit_emit8(code, opc);
 	jit_emit8(code, modrm);
 
@@ -432,7 +469,7 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg, u
 
 static
 void
-jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg,
+jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, int zerof_prefix, int force_rex, uint8_t opc, uint8_t reg,
     uint8_t rm_reg)
 {
 	uint8_t modrm;
@@ -442,10 +479,13 @@ jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg,
 	reg &= 0x7;
 	rm_reg &= 0x7;
 
-	if (reg_ext || rm_ext || w64)
+	if (reg_ext || rm_ext || w64 || force_rex)
 		jit_emit_rex(code, w64, reg_ext, 0, rm_ext);
 
 	modrm = (MODRM_MOD_RM_REG << 6) | (reg << 3) | (rm_reg);
+
+	if (zerof_prefix)
+		jit_emit8(code, OPC_ZEROF_PREFIX);
 
 	jit_emit8(code, opc);
 	jit_emit8(code, modrm);
@@ -454,37 +494,52 @@ jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, uint8_t opc, uint8_t reg,
 void
 jit_emit_mov_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_MOV_REG_RM, dst_reg, src_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_MOV_REG_RM, dst_reg, src_reg);
+}
+
+void
+jit_emit_movzx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_reg)
+{
+	jit_emit_opc1_reg_regrm(code, 0, 1, 0,
+	    (dw == JITOP_DW_8)  ? OPC_MOVZX8 : OPC_MOVZX16, dst_reg, src_reg);
+}
+
+void
+jit_emit_movsx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_reg)
+{
+	jit_emit_opc1_reg_regrm(code, 1, (dw != JITOP_DW_32), 0,
+	    (dw == JITOP_DW_8)  ? OPC_MOVSX8 :
+	    (dw == JITOP_DW_16) ? OPC_MOVSX16 : OPC_MOVSX32, dst_reg, src_reg);
 }
 
 void
 jit_emit_or_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_OR_REG_RM, dst_reg, src_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_OR_REG_RM, dst_reg, src_reg);
 }
 
 void
 jit_emit_xor_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_XOR_REG_RM, dst_reg, src_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_XOR_REG_RM, dst_reg, src_reg);
 }
 
 void
 jit_emit_and_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_AND_REG_RM, dst_reg, src_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_AND_REG_RM, dst_reg, src_reg);
 }
 
 void
 jit_emit_add_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_ADD_REG_RM, dst_reg, src_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_ADD_REG_RM, dst_reg, src_reg);
 }
 
 void
 jit_emit_sub_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_SUB_REG_RM, dst_reg, src_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_SUB_REG_RM, dst_reg, src_reg);
 }
 
 void
@@ -571,7 +626,7 @@ jit_emit_clz_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 void
 jit_emit_shift_reg_imm8(jit_codebuf_t code, int w64, int left, uint8_t rm_reg, int amt)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_SHIFT_RM_IMM,
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_SHIFT_RM_IMM,
 	    left ? MODRM_REG_SHL : MODRM_REG_SHR, rm_reg);
 
 	jit_emit8(code, amt & 0xFF);
@@ -580,7 +635,7 @@ jit_emit_shift_reg_imm8(jit_codebuf_t code, int w64, int left, uint8_t rm_reg, i
 void
 jit_emit_shift_reg_cl(jit_codebuf_t code, int w64, int left, uint8_t rm_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_SHIFT_RM_CL,
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_SHIFT_RM_CL,
 	    left ? MODRM_REG_SHL : MODRM_REG_SHR, rm_reg);
 }
 
@@ -590,16 +645,22 @@ jit_emit_cmp_reg_imm32(jit_codebuf_t code, uint8_t rm_reg, uint32_t imm)
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_CMP_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, 0, OPC_CMP_RM_IMM32,
+		jit_emit_opc1_reg_regrm(code, 0, 0, 0, OPC_CMP_RM_IMM32,
 		    MODRM_REG_CMP_IMM, rm_reg);
 	}
 	jit_emit32(code, imm);
 }
 
 void
+jit_emit_cmp_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_CMP_REG_RM, reg, rm_reg);
+}
+
+void
 jit_emit_test_reg_imm32(jit_codebuf_t code, uint8_t rm_reg, uint32_t imm)
 {
-	jit_emit_opc1_reg_regrm(code, 0, OPC_TEST_RM_IMM32,
+	jit_emit_opc1_reg_regrm(code, 0, 0, 0, OPC_TEST_RM_IMM32,
 	    MODRM_REG_TEST_IMM, rm_reg);
 
 	jit_emit32(code, imm);
@@ -608,46 +669,79 @@ jit_emit_test_reg_imm32(jit_codebuf_t code, uint8_t rm_reg, uint32_t imm)
 void
 jit_emit_test_reg_imm64(jit_codebuf_t code, uint8_t rm_reg, uint64_t imm)
 {
-	jit_emit_opc1_reg_regrm(code, 1, OPC_TEST_RM_IMM64,
+	jit_emit_opc1_reg_regrm(code, 1, 0, 0, OPC_TEST_RM_IMM64,
 	    MODRM_REG_TEST_IMM, rm_reg);
 
 	jit_emit64(code, imm);
 }
 
 void
+jit_emit_test_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_TEST_RM_REG, reg, rm_reg);
+}
+
+void
 jit_emit_and_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
+	int8_t imm8 = (int8_t)imm;
+	int use_imm8 = ((int32_t)imm8 == imm);
+
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_AND_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, 0, OPC_AND_RM_IMM32,
+		jit_emit_opc1_reg_regrm(code, 0, 0,
+		    (rm_reg == REG_RBP || rm_reg == REG_RSP || rm_reg == REG_RSI || rm_reg == REG_RDI),
+		    use_imm8 ? OPC_AND_RM_IMM8 : OPC_AND_RM_IMM32,
 		    MODRM_REG_AND_IMM, rm_reg);
 	}
-	jit_emit32(code, imm);
+
+	if (use_imm8)
+		jit_emit8(code, imm8);
+	else
+		jit_emit32(code, imm);
 }
 
 void
 jit_emit_or_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
+	int8_t imm8 = (int8_t)imm;
+	int use_imm8 = ((int32_t)imm8 == imm);
+
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_OR_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, w64, OPC_OR_RM_IMM32,
+		jit_emit_opc1_reg_regrm(code, w64, 0,
+		    (rm_reg == REG_RBP || rm_reg == REG_RSP || rm_reg == REG_RSI || rm_reg == REG_RDI),
+		    use_imm8 ? OPC_OR_RM_IMM8 : OPC_OR_RM_IMM32,
 		    MODRM_REG_OR_IMM, rm_reg);
 	}
-	jit_emit32(code, imm);
+
+	if (use_imm8)
+		jit_emit8(code, imm8);
+	else
+		jit_emit32(code, imm);
 }
 
 void
 jit_emit_xor_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
+	int8_t imm8 = (int8_t)imm;
+	int use_imm8 = ((int32_t)imm8 == imm);
+
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_XOR_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, w64, OPC_XOR_RM_IMM32,
+		jit_emit_opc1_reg_regrm(code, w64, 0,
+		    (rm_reg == REG_RBP || rm_reg == REG_RSP || rm_reg == REG_RSI || rm_reg == REG_RDI),
+		    use_imm8 ? OPC_XOR_RM_IMM8 : OPC_XOR_RM_IMM32,
 		    MODRM_REG_XOR_IMM, rm_reg);
 	}
-	jit_emit32(code, imm);
+
+	if (use_imm8)
+		jit_emit8(code, imm8);
+	else
+		jit_emit32(code, imm);
 }
 
 void
@@ -659,7 +753,7 @@ jit_emit_add_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_ADD_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, w64,
+		jit_emit_opc1_reg_regrm(code, w64, 0, 0,
 		    use_imm8 ? OPC_ADD_RM_IMM8 : OPC_ADD_RM_IMM32,
 		    MODRM_REG_ADD_IMM, rm_reg);
 	}
@@ -679,7 +773,7 @@ jit_emit_sub_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_SUB_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, w64,
+		jit_emit_opc1_reg_regrm(code, w64, 0, 0,
 		    use_imm8 ? OPC_SUB_RM_IMM8 : OPC_SUB_RM_IMM32,
 		    MODRM_REG_SUB_IMM, rm_reg);
 	}
@@ -695,8 +789,8 @@ jit_emit_sub_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 void
 jit_emit_not_(jit_codebuf_t code, int w64, uint8_t rm_reg)
 {
-	jit_emit_opc1_reg_regrm(code, w64, OPC_NOT_RM,
-	    2, rm_reg);
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_NOT_RM,
+	    MODRM_REG_NOT, rm_reg);
 }
 
 /* XXX */
@@ -758,9 +852,6 @@ struct jit_tgt_op_def const tgt_op_def[] = {
 	/* LEA r32/64, m XXX */
 	/* SUB r/m32/64, imm32 XXX */
 
-	[JITOP_NOT]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* NOT r/m32/64 */
-
 	[JITOP_SHL]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
 	/* SHL r/m32/64, cl */
 
@@ -774,16 +865,44 @@ struct jit_tgt_op_def const tgt_op_def[] = {
 	/* SHR r/m32/64, imm8 */
 
 	[JITOP_MOV]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* MOV r/m32/64, r32/64 (and vice versa) */
+	/* MOV r/m32/64, r32/64 (and vice versa), + MOVZX (for dw={8,16}) */
+
+	[JITOP_MOV_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* MOVSX r32/64, r/m8/16/32/64 + MOV (for dw={64}) */
 
 	[JITOP_MOVI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 	/* MOV r32/64, imm32/64 */
+
+	[JITOP_NOT]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	/* NOT r/m32/64 */
+
+	[JITOP_BSWAP]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	/* BSWAP r32/64 */
+
+	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* LZCNT (VEX stuff?) */
+
+	[JITOP_BFE]     = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* BEXTR (needs VEX stuff...) */
+
+	/* MOVZX for dw={8, 16} */
+	[JITOP_LDRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 
 	[JITOP_LDRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 
 	[JITOP_LDRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 
 	[JITOP_LDRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+
+	/* MOVSX for dw={8, 16, 32} */
+	[JITOP_LDRI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+
+	[JITOP_LDRR_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+
+	[JITOP_LDRBPO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+
+	[JITOP_LDRBPSO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+
 
 	[JITOP_STRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 
@@ -819,19 +938,45 @@ struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_BNTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
 	/* CMP r/m32/64, imm32/64 */
 
-	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "" },
-
 	[JITOP_RET]	= { .alias = "", .o_restrict = "", .i_restrict = "a" },
 	/* MOV + RETN */
 
 	[JITOP_RETI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* MOV + RETN */
+	/* (must use RET) */
 
-	[JITOP_BSWAP]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* BSWAP r32/64 */
+	[JITOP_CMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* CMP + CMOVcc */
+	[JITOP_CMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* CMPI + CMOVcc */
 
-	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* BSF/BSR r32/64, r/m32/64 */
+	[JITOP_CSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* CMP + CMOVcc*2 */
+	[JITOP_CSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* CMPI + CMOVcc*2 */
+
+	[JITOP_CSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* xor + CMP + SETcc */
+
+	[JITOP_CSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* xor + CMPI + SETcc */
+
+	[JITOP_TMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* TEST + CMOVcc */
+	[JITOP_TMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* TESTI + CMOVcc */
+
+	[JITOP_TSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* TEST + CMOVcc*2 */
+	[JITOP_TSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* TESTI + CMOVcc*2 */
+
+	[JITOP_TSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* xor + TEST + SETcc */
+
+	[JITOP_TSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* xor + TESTI + SETcc */
+
+	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "" },
 };
 
 int
@@ -842,26 +987,117 @@ jit_tgt_reg_empty_weight(jit_ctx_t ctx, int reg)
 
 static
 int
-check_pc_rel32s(jit_ctx_t ctx, uint64_t imm)
+check_pc_rel32s(jit_ctx_t ctx, int dw, uint64_t imm)
 {
-	/* XXX */
-	return 1;
+	uint64_t approx_pc;
+	uint64_t diff;
+	uint32_t diff_lim;
+
+	assert (ctx->codebuf != NULL);
+
+	approx_pc = (uint64_t)ctx->codebuf->emit_ptr;
+
+	if (imm > approx_pc)
+		diff = imm - approx_pc;
+	else
+		diff = approx_pc - imm;
+
+	/* 4K safety buffer */
+	diff += 4096;
+
+	/* Check it would fit within a signed integer */
+	diff_lim = (uint32_t)diff;
+	diff_lim &= 0x7FFFFFFF;
+
+	return ((uint64_t)diff_lim == diff);
+}
+
+static
+int
+check_signed32(int dw, uint64_t imm)
+{
+	int64_t simm = (int64_t)imm;
+	int32_t simm32 = (int32_t)simm;
+
+	if (dw != JITOP_DW_64)
+		return 1;
+
+	return ((int64_t)simm32 == simm);
+}
+
+static
+int
+check_unsigned32(int dw, uint64_t imm)
+{
+	uint32_t imm32 = (uint32_t)imm;
+
+	if (dw != JITOP_DW_64)
+		return 1;
+
+	return ((uint64_t)imm32 == imm);
+}
+
+static
+int
+check_signed8(int dw, uint64_t imm)
+{
+	int64_t simm = (int64_t)imm;
+	int8_t simm8 = (int8_t)simm;
+
+	return ((int64_t)simm8 == simm);
+}
+
+static
+int
+check_unsigned8(uint64_t imm)
+{
+	uint8_t imm8 = (uint8_t)imm;
+
+	return ((uint64_t)imm8 == imm);
 }
 
 int
-jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int argidx, uint64_t imm)
+jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int dw, int op_dw, int argidx, uint64_t imm)
 {
 	/* XXX */
-	if (op == JITOP_MOVI)
+	switch (op) {
+	case JITOP_MOVI:
 		return 1;
-	else if (op == JITOP_LDRI || op == JITOP_STRI)
-		return check_pc_rel32s(ctx, imm);
-	else if (op == JITOP_RETI)
+
+	case JITOP_LDRI:
+	case JITOP_LDRI_SEXT:
+	case JITOP_STRI:
+		return check_pc_rel32s(ctx, JITOP_DW_64, imm);
+
+	case JITOP_LDRBPO:
+	case JITOP_LDRBPO_SEXT:
+		return check_signed32(JITOP_DW_64, imm);
+
+	case JITOP_ANDI:
+	case JITOP_ORI:
+	case JITOP_XORI:
+	case JITOP_ADDI:
+	case JITOP_SUBI:
+		return check_signed32(dw, imm);
+
+	case JITOP_BCMPI:
+	case JITOP_BNCMPI:
+	case JITOP_BTESTI:
+	case JITOP_BNTESTI:
+	case JITOP_CMOVI:
+	case JITOP_CSELI:
+	case JITOP_CSETI:
+	case JITOP_TMOVI:
+	case JITOP_TSELI:
+	case JITOP_TSETI:
+		return check_signed32(op_dw, imm);
+
+	case JITOP_RETI:
 		return 0;
-	else if (/* XXX */0)
-		return 1;
-	else
+
+	default:
 		return 0;
+	}
 }
 
 jit_regset_t
@@ -895,89 +1131,105 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 {
 	jit_op_t op = JITOP_OP(opc);
 	int dw = JITOP_DW(opc);
-	int cc_dw = JITOP_CC_DW(opc);
+	int op_dw = JITOP_OP_DW(opc);
+	int w64 = (dw == JITOP_DW_64);
 
-	printf("cg:\t");
 	switch (op) {
 	case JITOP_MOV:
-		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]]);
-		jit_emit_mov_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[0], params[1]);
+		if (dw == JITOP_DW_8 || dw == JITOP_DW_16)
+			jit_emit_movzx_reg_reg(ctx->codebuf, dw, params[0], params[1]);
+		else
+			jit_emit_mov_reg_reg(ctx->codebuf, w64, params[0], params[1]);
+		break;
+
+	case JITOP_MOV_SEXT:
+		if (!w64)
+			jit_emit_movsx_reg_reg(ctx->codebuf, dw, params[0], params[1]);
+		else
+			jit_emit_mov_reg_reg(ctx->codebuf, w64, params[0], params[1]);
 		break;
 
 	case JITOP_MOVI:
-		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], params[1]);
 		if (params[1] == 0)
-			jit_emit_xor_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[0], params[0]);
-		else if ((dw == JITOP_DW_64) && ((uint32_t)params[1] != (uint64_t)params[1]))
+			jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
+		else if (w64 && ((uint32_t)params[1] != (uint64_t)params[1]))
 			jit_emit_mov_reg_imm64(ctx->codebuf, params[0], params[1]);
 		else
 			jit_emit_mov_reg_imm32(ctx->codebuf, params[0], params[1]);
 		break;
 
 	case JITOP_OR:
-		jit_emit_or_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], reg_to_name[params[2]]);
+		jit_emit_or_reg_reg(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_AND:
-		jit_emit_and_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], reg_to_name[params[2]]);
+		jit_emit_and_reg_reg(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_XOR:
-		jit_emit_xor_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], reg_to_name[params[2]]);
+		jit_emit_xor_reg_reg(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_ADD:
-		jit_emit_add_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], reg_to_name[params[2]]);
+		jit_emit_add_reg_reg(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_SUB:
-		jit_emit_sub_reg_reg(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], reg_to_name[params[2]]);
-		//printf("%s.%d\t%s, %s, %s\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], reg_to_name[params[2]]);
+		jit_emit_sub_reg_reg(ctx->codebuf, w64, params[1], params[2]);
 		assert(params[0] == params[1]);
 		break;
 
 	case JITOP_ORI:
-		jit_emit_or_reg_imm32(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], params[2]);
+		jit_emit_or_reg_imm32(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_ANDI:
-		jit_emit_and_reg_imm32(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], params[2]);
+		jit_emit_and_reg_imm32(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_XORI:
-		jit_emit_xor_reg_imm32(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], params[2]);
+		jit_emit_xor_reg_imm32(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_ADDI:
-		jit_emit_add_reg_imm32(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], params[2]);
+		jit_emit_add_reg_imm32(ctx->codebuf, w64, params[1], params[2]);
 		break;
 	case JITOP_SUBI:
-		jit_emit_sub_reg_imm32(ctx->codebuf, (dw == JITOP_DW_64), params[1], params[2]);
-		printf("%s.%d\t%s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[1]], params[2]);
-		//printf("%s.%d\t%s, %s, $%"PRIx64"\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], params[2]);
+		jit_emit_sub_reg_imm32(ctx->codebuf, w64, params[1], params[2]);
 		assert(params[0] == params[1]);
 		break;
 
 	case JITOP_LDRBPO:
-		printf("%s.%d\t%s, [%s + $%"PRId64"]\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], params[2]);
-		jit_emit_opc1_reg_memrm(ctx->codebuf, (dw == JITOP_DW_64), OPC_MOV_REG_RM, params[0],
-					params[1], NO_REG, 0, params[2], 0);
+		if (dw == JITOP_DW_64 || dw == JITOP_DW_32)
+			jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_REG_RM, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
+		else if (dw == JITOP_DW_16)
+			jit_emit_opc1_reg_memrm(ctx->codebuf, 0, 1, OPC_MOVZX16, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
+		else
+			jit_emit_opc1_reg_memrm(ctx->codebuf, 0, 1, OPC_MOVZX8, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
+		break;
+
+	case JITOP_LDRBPO_SEXT:
+		if (dw == JITOP_DW_64)
+			jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_REG_RM, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
+		else if (dw == JITOP_DW_32)
+			jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 0, OPC_MOVSX32, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
+		else if (dw == JITOP_DW_16)
+			jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 1, OPC_MOVSX16, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
+		else
+			jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 1, OPC_MOVSX8, params[0],
+			    params[1], NO_REG, 0, params[2], 0);
 		break;
 
 	case JITOP_STRBPO:
-		printf("%s.%d\t%s, [%s + $%"PRId64"]\n", op_def[op].mnemonic, dw, reg_to_name[params[0]], reg_to_name[params[1]], params[2]);
-		jit_emit_opc1_reg_memrm(ctx->codebuf, (dw == JITOP_DW_64), OPC_MOV_RM_REG, params[0],
+		jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_RM_REG, params[0],
 					params[1], NO_REG, 0, params[2], 0);
 		break;
 
 	case JITOP_RET:
-		printf("ret.%d\n", dw);
 		jit_emit_ret_(ctx, ctx->codebuf);
 		break;
+
 	default:
-		printf("%s.%d\n", op_def[op].mnemonic, dw);
+		printf("unhandled: %s.%d\n", op_def[op].mnemonic, dw);
 		break;
 	}
 }
@@ -989,31 +1241,32 @@ jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
 	jit_tmp_t tmp;
 	jit_tmp_state_t ts;
 	int i;
+	int mem_offset = 0x10;
 
 	for (i = 0; i < cnt; i++) {
 		tmp = (jit_tmp_t)params[i];
 		ts = GET_TMP_STATE(ctx, tmp);
 
-		/* XXX: do properly... */
-#if 0
-		ts->loc = JITLOC_STACK;
-		ts->mem_allocated = 1;
-		ts->mem_base_reg = jit_tgt_stack_base_reg;
-		ts->mem_offset = -i*sizeof(uint64_t);
-#endif
-#if 1
-		ts->loc = JITLOC_REG;
-		ts->mem_allocated = 0;
-		ts->reg = i;
-		ts->dirty = 1;
-		jit_regset_set(ctx->regs_used, i);
-		ctx->reg_to_tmp[i] = tmp;
-#endif
+		if (i < FN_ARG_REG_CNT) {
+			ts->loc = JITLOC_REG;
+			ts->mem_allocated = 0;
+			ts->reg = fn_arg_regs[i];
+			ts->dirty = 1;
+			jit_regset_set(ctx->regs_used, ts->reg);
+			ctx->reg_to_tmp[ts->reg] = tmp;
+		} else {
+			ts->loc = JITLOC_STACK;
+			ts->mem_allocated = 1;
+			ts->mem_base_reg = jit_tgt_stack_base_reg;
+			ts->mem_offset = mem_offset;
+
+			mem_offset += sizeof(uint64_t);
+		}
 	}
 
 #ifdef JIT_FPO
 #else
-	ctx->spill_stack_offset = -(8*CALLEE_SAVED_REG_CNT);
+	ctx->spill_stack_offset = -(sizeof(uint64_t)*CALLEE_SAVED_REG_CNT);
 #endif
 
 	ctx->codebuf->emit_ptr = ctx->codebuf->code_ptr =
@@ -1042,7 +1295,9 @@ emit_prologue(jit_ctx_t ctx)
 	jit_emit_mov_reg_reg(&prologue_buf, 1, REG_RBP, REG_RSP);
 
 	/* sub  $frame_size, %rsp */
-	frame_size = _ALIGN_SZ(8*(CALLEE_SAVED_REG_CNT + ctx->local_tmps_cnt + ctx->bb_tmps_cnt), 16);
+	frame_size = _ALIGN_SZ(8*(CALLEE_SAVED_REG_CNT +
+				  dyn_array_size(&ctx->local_tmps) +
+				  dyn_array_size(&ctx->bb_tmps)), 16);
 	jit_emit_sub_reg_imm32(&prologue_buf, 1, REG_RSP, frame_size);
 
 	/* ^^^ equivalent to enter (but enter seems to take more cycles) */
@@ -1052,7 +1307,7 @@ emit_prologue(jit_ctx_t ctx)
 			continue;
 
 		/* mov %reg, -(i*8)(%rbp) */
-		jit_emit_opc1_reg_memrm(&prologue_buf, 1, OPC_MOV_RM_REG, reg,
+		jit_emit_opc1_reg_memrm(&prologue_buf, 1, 0, OPC_MOV_RM_REG, reg,
 					REG_RBP, NO_REG, 0, -i*8, 0);
 	}
 #endif
@@ -1080,7 +1335,7 @@ emit_epilogue(jit_ctx_t ctx)
 			continue;
 
 		/* mov -(i*8)(%rbp), %saved_reg */
-		jit_emit_opc1_reg_memrm(ctx->codebuf, 1, OPC_MOV_REG_RM, saved_reg,
+		jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 0, OPC_MOV_REG_RM, saved_reg,
 					REG_RBP, NO_REG, 0, -i*8, 0);
 	}
 
@@ -1135,9 +1390,9 @@ jit_tgt_ctx_init(jit_ctx_t ctx)
 	jit_regset_set(ctx->overall_choice, REG_R13);
 	jit_regset_set(ctx->overall_choice, REG_R14);
 	jit_regset_set(ctx->overall_choice, REG_R15);
-
-	/* XXX: ! */
+#if 0
 	jit_regset_full(ctx->regs_ever_used);
+#endif
 }
 
 
