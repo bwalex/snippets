@@ -1501,7 +1501,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 	int i, idx;
 	int reg, old_reg;
 	int cnt;
-	int extra_regs = 0;
+	int extra_regs = -1;
 	uint64_t tparams[16];
 	uint64_t tparams2[16];
 	jit_regset_t current_choice = ctx->overall_choice;
@@ -1655,7 +1655,6 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 
 	if (tgt_def->check_needed) {
 		extra_regs = jit_tgt_feature_check(ctx, op);
-		assert (extra_regs >= 0);
 		idx = def->in_args + def->out_args;
 		for (i = 0; i < extra_regs; i++, idx++) {
 			jit_regset_full(limited_choice);
@@ -1667,7 +1666,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		}
 	}
 
-	if (extra_regs == 0) {
+	if (extra_regs == -1) {
 		/*
 		 * Allocate output argument registers
 		 */
@@ -1695,7 +1694,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		 * and allocate as many registers as required.
 		 */
 		if ((int)sizeof(tgt_def->alias) > idx && tgt_def->alias[idx] >= '0' &&
-		    (extra_regs == 0)) {
+		    (extra_regs == -1)) {
 			/*
 			 * The destination register will have to be the same as one of the
 			 * source registers.

@@ -1112,9 +1112,11 @@ jit_tgt_feature_check(jit_ctx_t ctx, jit_op_t op)
 {
 	switch (op) {
 	case JITOP_CLZ:
+		return (have_lzcnt) ? -1 : 0;
+	case JITOP_BFE:
 		return 0;
 	default:
-		return 0;
+		return -1;
 	}
 }
 
