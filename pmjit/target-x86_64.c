@@ -105,6 +105,9 @@
 
 #define OPC_RET			0xC3
 
+#define OPC_SET_CC		0x90
+#define OPC_CMOV_CC		0x40
+
 #define OPC_PUSH_REG		0x50
 #define OPC_POP_REG		0x58
 #define OPC_ENTER		0xC8
@@ -134,6 +137,7 @@
 #define MODRM_REG_ADD_IMM	0x0
 #define MODRM_REG_SUB_IMM	0x5
 #define MODRM_REG_NOT		0x2
+#define MODRM_REG_SETCC		0x0
 
 
 /*
@@ -583,6 +587,13 @@ jit_emit_mov_reg_imm32(jit_codebuf_t code, uint8_t dst_reg, uint32_t imm)
 }
 
 void
+jit_emit_mov_reg_simm32(jit_codebuf_t code, int w64, uint8_t dst_reg, uint32_t imm)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_MOV_RM_IMM32, MODRM_REG_MOV_IMM, dst_reg);
+	jit_emit32(code, imm);
+}
+
+void
 jit_emit_mov_reg_imm64(jit_codebuf_t code, uint8_t dst_reg, uint64_t imm)
 {
 	int reg_ext = dst_reg & 0x8;
@@ -592,8 +603,6 @@ jit_emit_mov_reg_imm64(jit_codebuf_t code, uint8_t dst_reg, uint64_t imm)
 	jit_emit_rex(code, 1, reg_ext, 0, 0);
 	jit_emit8(code, OPC_MOV_REG_IMM32 + dst_reg);
 	jit_emit64(code, imm);
-
-	/* XXX: consider using optimum encoding, either zero-extend, or MOVSX, or in general just minimum width immediate */
 }
 
 void
@@ -866,6 +875,19 @@ jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
 	jit_emit_reloc(ctx, label);
 }
 
+void
+jit_emit_cmovcc_reg_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg, uint8_t src_reg)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 1, 0, OPC_CMOV_CC + cc, dst_reg, src_reg);
+}
+
+void
+jit_emit_setcc_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 1,
+	    (dst_reg == REG_RBP || dst_reg == REG_RSP || dst_reg == REG_RSI || dst_reg == REG_RDI),
+	OPC_SET_CC + cc, MODRM_REG_SETCC, dst_reg);
+}
 
 struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
@@ -1204,7 +1226,9 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 	case JITOP_MOVI:
 		if (params[1] == 0)
 			jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
-		else if (w64 && ((uint32_t)params[1] != (uint64_t)params[1]))
+		else if (check_signed32(dw, params[1]))
+			jit_emit_mov_reg_simm32(ctx->codebuf, w64, params[0], params[1]);
+		else if (w64 && !check_unsigned32(dw, params[1]))
 			jit_emit_mov_reg_imm64(ctx->codebuf, params[0], params[1]);
 		else
 			jit_emit_mov_reg_imm32(ctx->codebuf, params[0], params[1]);
@@ -1336,6 +1360,74 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 	case JITOP_SET_LABEL:
 		label = (jit_label_t)params[0];
 		label->tgt_info = ctx->codebuf->emit_ptr;
+		break;
+
+	case JITOP_CMOV:
+		jit_emit_cmp_reg_reg(ctx->codebuf, op_w64, params[3], params[4]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, cc_to_code[params[2]], params[0], params[1]);
+		break;
+
+	case JITOP_CMOVI:
+		jit_emit_cmp_reg_imm32(ctx->codebuf, op_w64, params[3], params[4]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, cc_to_code[params[2]], params[0], params[1]);
+		break;
+
+	case JITOP_CSEL:
+		jit_emit_cmp_reg_reg(ctx->codebuf, op_w64, params[4], params[5]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, cc_to_code[params[2]], params[0], params[1]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, 1^cc_to_code[params[2]], params[0], params[2]);
+		break;
+
+	case JITOP_CSELI:
+		jit_emit_cmp_reg_imm32(ctx->codebuf, op_w64, params[4], params[5]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, cc_to_code[params[2]], params[0], params[1]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, 1^cc_to_code[params[2]], params[0], params[2]);
+		break;
+
+	case JITOP_CSET:
+		jit_emit_cmp_reg_reg(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
+		jit_emit_setcc_reg(ctx->codebuf, w64, cc_to_code[params[1]], params[0]);
+		break;
+
+	case JITOP_CSETI:
+		jit_emit_cmp_reg_imm32(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
+		jit_emit_setcc_reg(ctx->codebuf, w64, cc_to_code[params[1]], params[0]);
+		break;
+
+	case JITOP_TMOV:
+		jit_emit_test_reg_reg(ctx->codebuf, op_w64, params[3], params[4]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, test_cc_to_code[params[2]], params[0], params[1]);
+		break;
+
+	case JITOP_TMOVI:
+		jit_emit_test_reg_imm32(ctx->codebuf, op_w64, params[3], params[4]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, test_cc_to_code[params[2]], params[0], params[1]);
+		break;
+
+	case JITOP_TSEL:
+		jit_emit_test_reg_reg(ctx->codebuf, op_w64, params[4], params[5]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, test_cc_to_code[params[2]], params[0], params[1]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, 1^test_cc_to_code[params[2]], params[0], params[2]);
+		break;
+
+	case JITOP_TSELI:
+		jit_emit_test_reg_imm32(ctx->codebuf, op_w64, params[4], params[5]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, test_cc_to_code[params[2]], params[0], params[1]);
+		jit_emit_cmovcc_reg_reg(ctx->codebuf, w64, 1^test_cc_to_code[params[2]], params[0], params[2]);
+		break;
+
+	case JITOP_TSET:
+		jit_emit_test_reg_reg(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
+		jit_emit_setcc_reg(ctx->codebuf, w64, test_cc_to_code[params[1]], params[0]);
+		break;
+
+	case JITOP_TSETI:
+		jit_emit_test_reg_imm32(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
+		jit_emit_setcc_reg(ctx->codebuf, w64, test_cc_to_code[params[1]], params[0]);
 		break;
 
 	default:

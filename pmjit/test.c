@@ -35,7 +35,7 @@ int main(void)
 	jit_emit_add(ctx, d, a, b);
 	jit_emit_bcmp(ctx, l0, CMP_LT, d, c);
 	jit_emit_xor(ctx, e, b, c);
-	jit_emit_movi(ctx, f, 0xffffffff);
+	jit_emit_movi(ctx, f, 0xffffffffUL);
 	jit_emit_and(ctx, g, f, b);
 	jit_emit_xori(ctx, e, e, f);
 	jit_emit_or(ctx, e, e, d);
