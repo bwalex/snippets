@@ -1177,6 +1177,20 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 		assert(params[0] == params[1]);
 		break;
 
+	case JITOP_SHL:
+	case JITOP_SHR:
+		assert (params[0] == params[1]);
+		assert (params[2] == REG_RCX);
+		jit_emit_shift_reg_cl(ctx->codebuf, w64, (op == JITOP_SHL), params[1]);
+		break;
+
+	case JITOP_SHLI:
+	case JITOP_SHRI:
+		assert (params[0] == params[1]);
+		jit_emit_shift_reg_imm8(ctx->codebuf, w64, (op == JITOP_SHLI), params[1],
+		    (int)params[2]);
+		break;
+
 	case JITOP_LDRBPO:
 		if (dw == JITOP_DW_64 || dw == JITOP_DW_32)
 			jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_REG_RM, params[0],
