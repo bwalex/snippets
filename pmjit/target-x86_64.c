@@ -52,18 +52,21 @@
 #define OPC_XOR_REG_RM		0x33
 #define OPC_XOR_RM_REG		0x31
 #define OPC_XOR_RM_IMM32	0x81
+#define OPC_XOR_EAX_IMM8	0x34
 #define OPC_XOR_EAX_IMM32	0x35
 #define OPC_XOR_RM_IMM8		0x80
 
 #define OPC_AND_REG_RM		0x23
 #define OPC_AND_RM_REG		0x21
 #define OPC_AND_RM_IMM32	0x81
+#define OPC_AND_EAX_IMM8	0x24
 #define OPC_AND_EAX_IMM32	0x25
 #define OPC_AND_RM_IMM8		0x80
 
 #define OPC_OR_REG_RM		0x0B
 #define OPC_OR_RM_REG		0x09
 #define OPC_OR_RM_IMM32		0x81
+#define OPC_OR_EAX_IMM8		0x0C
 #define OPC_OR_EAX_IMM32	0x0D
 #define OPC_OR_RM_IMM8		0x80
 
@@ -707,7 +710,7 @@ jit_emit_and_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm
 	int use_imm8 = check_signed8(imm);
 
 	if (rm_reg == REG_RAX) {
-		jit_emit8(code, OPC_AND_EAX_IMM32);
+		jit_emit8(code, use_imm8 ? OPC_AND_EAX_IMM8 : OPC_AND_EAX_IMM32);
 	} else {
 		jit_emit_opc1_reg_regrm(code, 0, 0,
 		    (rm_reg == REG_RBP || rm_reg == REG_RSP || rm_reg == REG_RSI || rm_reg == REG_RDI),
@@ -729,7 +732,7 @@ jit_emit_or_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 	int use_imm8 = check_signed8(imm);
 
 	if (rm_reg == REG_RAX) {
-		jit_emit8(code, OPC_OR_EAX_IMM32);
+		jit_emit8(code, use_imm8 ? OPC_OR_EAX_IMM8 : OPC_OR_EAX_IMM32);
 	} else {
 		jit_emit_opc1_reg_regrm(code, w64, 0,
 		    (rm_reg == REG_RBP || rm_reg == REG_RSP || rm_reg == REG_RSI || rm_reg == REG_RDI),
@@ -751,7 +754,7 @@ jit_emit_xor_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm
 	int use_imm8 = check_signed8(imm);
 
 	if (rm_reg == REG_RAX) {
-		jit_emit8(code, OPC_XOR_EAX_IMM32);
+		jit_emit8(code, use_imm8 ? OPC_XOR_EAX_IMM8 : OPC_XOR_EAX_IMM32);
 	} else {
 		jit_emit_opc1_reg_regrm(code, w64, 0,
 		    (rm_reg == REG_RBP || rm_reg == REG_RSP || rm_reg == REG_RSI || rm_reg == REG_RDI),
