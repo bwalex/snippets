@@ -269,100 +269,6 @@ const int jit_tgt_stack_base_reg = REG_RSP;
 const int jit_tgt_stack_base_reg = REG_RBP;
 #endif
 
-
-static
-int
-jit_cmp_cc_disp(jit_cc_t c)
-{
-	switch (c) {
-	case CMP_EQ: return 4;
-	case CMP_NE: return 5;
-	case CMP_B:  return 2;
-	case CMP_AE: return 3;
-	case CMP_BE: return 6;
-	case CMP_A:  return 7;
-	case CMP_LT: return 12;
-	case CMP_GE: return 13;
-	case CMP_LE: return 14;
-	case CMP_GT: return 15;
-	default:     return 0;
-	}
-}
-
-static
-int
-jit_test_cc_disp(jit_test_cc_t c)
-{
-	switch (c) {
-	case TST_Z:       return 4;
-	case TST_NZ:      return 5;
-	case TST_MSB_SET: return 8;
-	case TST_MSB_CLR: return 9;
-	default:          return 0;
-	}
-}
-
-static
-void
-jit_emit32_at(uint8_t *buf, uint32_t u32)
-{
-	*buf++ = (u32 >> 0) & 0xff;
-	*buf++ = (u32 >> 8) & 0xff;
-	*buf++ = (u32 >> 16) & 0xff;
-	*buf++ = (u32 >> 24) & 0xff;
-}
-
-static
-void
-jit_emit64_at(uint8_t *buf, uint64_t u64)
-{
-	*buf++ = (u64 >> 0) & 0xff;
-	*buf++ = (u64 >> 8) & 0xff;
-	*buf++ = (u64 >> 16) & 0xff;
-	*buf++ = (u64 >> 24) & 0xff;
-	*buf++ = (u64 >> 32) & 0xff;
-	*buf++ = (u64 >> 40) & 0xff;
-	*buf++ = (u64 >> 48) & 0xff;
-	*buf++ = (u64 >> 56) & 0xff;
-}
-
-void
-jit_emit8(jit_codebuf_t code, uint8_t u8)
-{
-	assert(code->code_sz + 1 <= code->map_sz);
-
-	*code->emit_ptr++ = u8;
-	code->code_sz += 1;
-}
-
-void
-jit_emit32(jit_codebuf_t code, uint32_t u32)
-{
-	assert(code->code_sz + 4 <= code->map_sz);
-
-	*code->emit_ptr++ = (u32 >> 0) & 0xff;
-	*code->emit_ptr++ = (u32 >> 8) & 0xff;
-	*code->emit_ptr++ = (u32 >> 16) & 0xff;
-	*code->emit_ptr++ = (u32 >> 24) & 0xff;
-	code->code_sz += 4;
-}
-
-void
-jit_emit64(jit_codebuf_t code, uint64_t u64)
-{
-	assert(code->code_sz + 8 <= code->map_sz);
-
-	*code->emit_ptr++ = (u64 >> 0) & 0xff;
-	*code->emit_ptr++ = (u64 >> 8) & 0xff;
-	*code->emit_ptr++ = (u64 >> 16) & 0xff;
-	*code->emit_ptr++ = (u64 >> 24) & 0xff;
-	*code->emit_ptr++ = (u64 >> 32) & 0xff;
-	*code->emit_ptr++ = (u64 >> 40) & 0xff;
-	*code->emit_ptr++ = (u64 >> 48) & 0xff;
-	*code->emit_ptr++ = (u64 >> 56) & 0xff;
-	code->code_sz += 8;
-}
-
 static
 void
 jit_emit_rex(jit_codebuf_t code, int w64, int r_reg_ext, int x_sib_ext, int b_rm_ext)
@@ -487,7 +393,7 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, uint8_t o
 
 	if (use_disp) {
 		if (rip_relative) {
-			disp = (int32_t)((code->emit_ptr + 4) - abs);
+			disp = (int32_t)((uint64_t)(code->emit_ptr + 4) - abs);
 			jit_emit32(code, disp);
 		} else if (use_disp8) {
 			jit_emit8(code, disp8);
@@ -521,12 +427,14 @@ jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, int zerof_prefix, int force
 	jit_emit8(code, modrm);
 }
 
+static
 void
 jit_emit_mov_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_MOV_REG_RM, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_movzx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_reg)
 {
@@ -534,6 +442,7 @@ jit_emit_movzx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_
 	    (dw == JITOP_DW_8)  ? OPC_MOVZX8 : OPC_MOVZX16, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_movsx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_reg)
 {
@@ -542,36 +451,42 @@ jit_emit_movsx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_
 	    (dw == JITOP_DW_16) ? OPC_MOVSX16 : OPC_MOVSX32, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_or_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_OR_REG_RM, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_xor_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_XOR_REG_RM, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_and_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_AND_REG_RM, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_add_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_ADD_REG_RM, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_sub_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_SUB_REG_RM, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_mov_reg_imm32(jit_codebuf_t code, uint8_t dst_reg, uint32_t imm)
 {
@@ -586,6 +501,7 @@ jit_emit_mov_reg_imm32(jit_codebuf_t code, uint8_t dst_reg, uint32_t imm)
 	jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_mov_reg_simm32(jit_codebuf_t code, int w64, uint8_t dst_reg, uint32_t imm)
 {
@@ -593,6 +509,7 @@ jit_emit_mov_reg_simm32(jit_codebuf_t code, int w64, uint8_t dst_reg, uint32_t i
 	jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_mov_reg_imm64(jit_codebuf_t code, uint8_t dst_reg, uint64_t imm)
 {
@@ -605,6 +522,7 @@ jit_emit_mov_reg_imm64(jit_codebuf_t code, uint8_t dst_reg, uint64_t imm)
 	jit_emit64(code, imm);
 }
 
+static
 void
 jit_emit_push_reg(jit_codebuf_t code, uint8_t reg)
 {
@@ -618,6 +536,7 @@ jit_emit_push_reg(jit_codebuf_t code, uint8_t reg)
 	jit_emit8(code, OPC_PUSH_REG + reg);
 }
 
+static
 void
 jit_emit_pop_reg(jit_codebuf_t code, uint8_t reg)
 {
@@ -631,6 +550,7 @@ jit_emit_pop_reg(jit_codebuf_t code, uint8_t reg)
 	jit_emit8(code, OPC_POP_REG + reg);
 }
 
+static
 void
 jit_emit_bswap_reg(jit_codebuf_t code, int w64, uint8_t reg)
 {
@@ -645,6 +565,7 @@ jit_emit_bswap_reg(jit_codebuf_t code, int w64, uint8_t reg)
 	jit_emit8(code, OPC_BSWAP_REG + reg);
 }
 
+static
 void
 jit_emit_clz_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 {
@@ -658,6 +579,7 @@ jit_emit_clz_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 	/* XXX: this is just plain wrong */
 }
 
+static
 void
 jit_emit_shift_reg_imm8(jit_codebuf_t code, int w64, int left, uint8_t rm_reg, int amt)
 {
@@ -667,6 +589,7 @@ jit_emit_shift_reg_imm8(jit_codebuf_t code, int w64, int left, uint8_t rm_reg, i
 	jit_emit8(code, amt & 0xFF);
 }
 
+static
 void
 jit_emit_shift_reg_cl(jit_codebuf_t code, int w64, int left, uint8_t rm_reg)
 {
@@ -674,6 +597,7 @@ jit_emit_shift_reg_cl(jit_codebuf_t code, int w64, int left, uint8_t rm_reg)
 	    left ? MODRM_REG_SHL : MODRM_REG_SHR, rm_reg);
 }
 
+static
 void
 jit_emit_cmp_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
@@ -688,12 +612,14 @@ jit_emit_cmp_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm
 	jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_cmp_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_CMP_REG_RM, reg, rm_reg);
 }
 
+static
 void
 jit_emit_test_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
@@ -703,17 +629,19 @@ jit_emit_test_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t im
 	jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_test_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_TEST_RM_REG, reg, rm_reg);
 }
 
+static
 void
 jit_emit_and_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
 	int8_t imm8 = (int8_t)imm;
-	int use_imm8 = ((int32_t)imm8 == imm);
+	int use_imm8 = check_signed8(imm);
 
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_AND_EAX_IMM32);
@@ -730,11 +658,12 @@ jit_emit_and_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm
 		jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_or_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
 	int8_t imm8 = (int8_t)imm;
-	int use_imm8 = ((int32_t)imm8 == imm);
+	int use_imm8 = check_signed8(imm);
 
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_OR_EAX_IMM32);
@@ -751,11 +680,12 @@ jit_emit_or_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 		jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_xor_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
 	int8_t imm8 = (int8_t)imm;
-	int use_imm8 = ((int32_t)imm8 == imm);
+	int use_imm8 = check_signed8(imm);
 
 	if (rm_reg == REG_RAX) {
 		jit_emit8(code, OPC_XOR_EAX_IMM32);
@@ -772,6 +702,7 @@ jit_emit_xor_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm
 		jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_add_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 {
@@ -792,6 +723,7 @@ jit_emit_add_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 		jit_emit32(code, imm);
 }
 
+static
 void
 jit_emit_sub_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 {
@@ -814,6 +746,7 @@ jit_emit_sub_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, int32_t imm)
 
 
 /* XXX */
+static
 void
 jit_emit_not_(jit_codebuf_t code, int w64, uint8_t rm_reg)
 {
@@ -822,6 +755,7 @@ jit_emit_not_(jit_codebuf_t code, int w64, uint8_t rm_reg)
 }
 
 /* XXX */
+static
 void
 jit_emit_ret_(jit_ctx_t ctx, jit_codebuf_t code)
 {
@@ -852,6 +786,7 @@ jit_emit_reloc(jit_ctx_t ctx, jit_label_t label)
 	jit_emit32(ctx->codebuf, 0xDEADC0DE);
 }
 
+static
 void
 jit_emit_jmp(jit_ctx_t ctx, jit_label_t label)
 {
@@ -859,6 +794,7 @@ jit_emit_jmp(jit_ctx_t ctx, jit_label_t label)
 	jit_emit_reloc(ctx, label);
 }
 
+static
 void
 jit_emit_jcc(jit_ctx_t ctx, int cc, jit_label_t label)
 {
@@ -867,6 +803,7 @@ jit_emit_jcc(jit_ctx_t ctx, int cc, jit_label_t label)
 	jit_emit_reloc(ctx, label);
 }
 
+static
 void
 jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
 {
@@ -875,12 +812,14 @@ jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
 	jit_emit_reloc(ctx, label);
 }
 
+static
 void
 jit_emit_cmovcc_reg_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 1, 0, OPC_CMOV_CC + cc, dst_reg, src_reg);
 }
 
+static
 void
 jit_emit_setcc_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg)
 {
@@ -888,168 +827,6 @@ jit_emit_setcc_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg)
 	    (dst_reg == REG_RBP || dst_reg == REG_RSP || dst_reg == REG_RSI || dst_reg == REG_RDI),
 	OPC_SET_CC + cc, MODRM_REG_SETCC, dst_reg);
 }
-
-struct jit_tgt_op_def const tgt_op_def[] = {
-	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* AND r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_ANDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* AND r/m32/64, imm32 XXX */
-
-	[JITOP_OR]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* OR r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_ORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* OR r/m32/64, imm32 XXX */
-
-	[JITOP_XOR]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* XOR r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_XORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* XOR r/m32/64, imm32 XXX */
-
-	[JITOP_ADD]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* LEA r32/64, m XXX */
-	/* ADD r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_ADDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* LEA r32/64, m XXX */
-	/* ADD r/m32/64, imm32 XXX */
-
-	[JITOP_SUB]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* LEA r32/64, m XXX */
-	/* SUB r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_SUBI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* LEA r32/64, m XXX */
-	/* SUB r/m32/64, imm32 XXX */
-
-	[JITOP_SHL]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
-	/* SHL r/m32/64, cl */
-
-	[JITOP_SHLI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* SHL r/m32/64, imm8 */
-
-	[JITOP_SHR]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
-	/* SHR r/m32/64, cl */
-
-	[JITOP_SHRI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* SHR r/m32/64, imm8 */
-
-	[JITOP_MOV]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* MOV r/m32/64, r32/64 (and vice versa), + MOVZX (for dw={8,16}) */
-
-	[JITOP_MOV_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* MOVSX r32/64, r/m8/16/32/64 + MOV (for dw={64}) */
-
-	[JITOP_MOVI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* MOV r32/64, imm32/64 */
-
-	[JITOP_NOT]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* NOT r/m32/64 */
-
-	[JITOP_BSWAP]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	/* BSWAP r32/64 */
-
-	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* LZCNT (VEX stuff?) */
-
-	[JITOP_BFE]     = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* BEXTR (needs VEX stuff...) */
-
-	/* MOVZX for dw={8, 16} */
-	[JITOP_LDRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_LDRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_LDRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_LDRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	/* MOVSX for dw={8, 16, 32} */
-	[JITOP_LDRI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_LDRR_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_LDRBPO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_LDRBPSO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-
-	[JITOP_STRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_STRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_STRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_STRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_BRANCH]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-
-	[JITOP_BCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_BCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, imm32 XXX */
-
-	[JITOP_BNCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_BNCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, imm32 XXX */
-
-	[JITOP_BTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_BTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, imm32/64 */
-
-	[JITOP_BNTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, r32/64 (and vice versa) */
-
-	[JITOP_BNTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP r/m32/64, imm32/64 */
-
-	[JITOP_RET]	= { .alias = "", .o_restrict = "", .i_restrict = "a" },
-	/* MOV + RETN */
-
-	[JITOP_RETI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* (must use RET) */
-
-	[JITOP_CMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP + CMOVcc */
-	[JITOP_CMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMPI + CMOVcc */
-
-	[JITOP_CSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMP + CMOVcc*2 */
-	[JITOP_CSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* CMPI + CMOVcc*2 */
-
-	[JITOP_CSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* xor + CMP + SETcc */
-
-	[JITOP_CSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* xor + CMPI + SETcc */
-
-	[JITOP_TMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* TEST + CMOVcc */
-	[JITOP_TMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* TESTI + CMOVcc */
-
-	[JITOP_TSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* TEST + CMOVcc*2 */
-	[JITOP_TSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* TESTI + CMOVcc*2 */
-
-	[JITOP_TSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* xor + TEST + SETcc */
-
-	[JITOP_TSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	/* xor + TESTI + SETcc */
-
-	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "" },
-};
 
 int
 jit_tgt_reg_empty_weight(jit_ctx_t ctx, int reg)
@@ -1084,50 +861,6 @@ check_pc_rel32s(jit_ctx_t ctx, int dw, uint64_t imm)
 	return ((uint64_t)diff_lim == diff);
 }
 
-static
-int
-check_signed32(int dw, uint64_t imm)
-{
-	int64_t simm = (int64_t)imm;
-	int32_t simm32 = (int32_t)simm;
-
-	if (dw != JITOP_DW_64)
-		return 1;
-
-	return ((int64_t)simm32 == simm);
-}
-
-static
-int
-check_unsigned32(int dw, uint64_t imm)
-{
-	uint32_t imm32 = (uint32_t)imm;
-
-	if (dw != JITOP_DW_64)
-		return 1;
-
-	return ((uint64_t)imm32 == imm);
-}
-
-static
-int
-check_signed8(int dw, uint64_t imm)
-{
-	int64_t simm = (int64_t)imm;
-	int8_t simm8 = (int8_t)simm;
-
-	return ((int64_t)simm8 == simm);
-}
-
-static
-int
-check_unsigned8(uint64_t imm)
-{
-	uint8_t imm8 = (uint8_t)imm;
-
-	return ((uint64_t)imm8 == imm);
-}
-
 int
 jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int dw, int op_dw, int argidx, uint64_t imm)
 {
@@ -1143,14 +876,14 @@ jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int dw, int op_dw, int argidx, uin
 
 	case JITOP_LDRBPO:
 	case JITOP_LDRBPO_SEXT:
-		return check_signed32(JITOP_DW_64, imm);
+		return check_signed32(imm);
 
 	case JITOP_ANDI:
 	case JITOP_ORI:
 	case JITOP_XORI:
 	case JITOP_ADDI:
 	case JITOP_SUBI:
-		return check_signed32(dw, imm);
+		return (dw != JITOP_DW_64) ? 1 : check_signed32(imm);
 
 	case JITOP_BCMPI:
 	case JITOP_BNCMPI:
@@ -1162,7 +895,7 @@ jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int dw, int op_dw, int argidx, uin
 	case JITOP_TMOVI:
 	case JITOP_TSELI:
 	case JITOP_TSETI:
-		return check_signed32(op_dw, imm);
+		return (op_dw != JITOP_DW_64) ? 1 : check_signed32(imm);
 
 	case JITOP_RETI:
 		return 0;
@@ -1196,7 +929,6 @@ jit_tgt_reg_restrict(jit_ctx_t ctx, jit_op_t op, char constraint)
 
 	return rs;
 }
-/* XXX: how does OP r/m64, imm32 work? is imm32 zero-extended? */
 
 void
 jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
@@ -1226,9 +958,9 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 	case JITOP_MOVI:
 		if (params[1] == 0)
 			jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
-		else if (check_signed32(dw, params[1]))
+		else if (w64 && check_signed32(params[1]))
 			jit_emit_mov_reg_simm32(ctx->codebuf, w64, params[0], params[1]);
-		else if (w64 && !check_unsigned32(dw, params[1]))
+		else if (w64 && !check_unsigned32(params[1]))
 			jit_emit_mov_reg_imm64(ctx->codebuf, params[0], params[1]);
 		else
 			jit_emit_mov_reg_imm32(ctx->codebuf, params[0], params[1]);
@@ -1306,7 +1038,7 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 
 	case JITOP_BRANCH:
 		label = (jit_label_t)params[0];
-		jit_emit_jmp(ctx, params[0]);
+		jit_emit_jmp(ctx, label);
 		break;
 
 	case JITOP_BCMP:
@@ -1468,7 +1200,7 @@ jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
 
 #ifdef JIT_FPO
 #else
-	ctx->spill_stack_offset = -(sizeof(uint64_t)*CALLEE_SAVED_REG_CNT);
+	ctx->spill_stack_offset = -((int)sizeof(uint64_t)*CALLEE_SAVED_REG_CNT);
 #endif
 
 	ctx->codebuf->emit_ptr = ctx->codebuf->code_ptr =
@@ -1481,7 +1213,6 @@ emit_prologue(jit_ctx_t ctx)
 {
 	struct jit_codebuf prologue_buf;
 	size_t prologue_sz;
-	off_t offset;
 	int32_t frame_size;
 	int i, reg;
 	int r;
@@ -1516,7 +1247,6 @@ emit_prologue(jit_ctx_t ctx)
 
 	assert(prologue_buf.code_sz <= MAX_PROLOGUE_SZ);
 
-	offset = MAX_PROLOGUE_SZ - prologue_buf.code_sz;
 	ctx->codebuf->code_ptr =
 	    ctx->codebuf->code_ptr - prologue_buf.code_sz;
 
@@ -1630,3 +1360,69 @@ jit_tgt_init(void)
 	return;
 }
 
+
+struct jit_tgt_op_def const tgt_op_def[] = {
+	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_ANDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_OR]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_ORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_XOR]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_XORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_ADD]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	/* LEA r32/64, m XXX */
+	[JITOP_ADDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	/* LEA r32/64, m XXX */
+	[JITOP_SUB]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_SUBI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_SHL]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
+	[JITOP_SHLI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_SHR]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
+	[JITOP_SHRI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_MOV]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_MOV_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_MOVI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_NOT]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BSWAP]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* LZCNT (VEX stuff?) */
+	[JITOP_BFE]     = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* BEXTR (needs VEX stuff...) */
+	[JITOP_LDRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	/* MOVSX for dw={8, 16, 32} */
+	[JITOP_LDRI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRR_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRBPO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRBPSO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+
+	[JITOP_STRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_STRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_STRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_STRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BRANCH]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BNCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BNCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BNTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BNTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_RET]	= { .alias = "", .o_restrict = "", .i_restrict = "a" },
+	[JITOP_RETI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_CSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_TMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_TMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_TSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_TSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_TSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_TSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "" },
+};
