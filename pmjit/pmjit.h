@@ -100,7 +100,7 @@ void jit_emit_movi(jit_ctx_t ctx, jit_tmp_t dst, uint64_t imm);
 /* Data processing: misc bitops, etc */
 void jit_emit_bswap(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
 void jit_emit_clz(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1);
-void jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t hi, uint8_t lo);
+void jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t lsb, uint8_t len);
 
 /* Data processing: arithmetic */
 void jit_emit_add(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, jit_tmp_t r2);

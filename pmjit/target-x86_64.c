@@ -972,6 +972,35 @@ jit_emit_sw_lzcnt_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t 
 	    calculate_disp8(label, label_reloc));
 }
 
+static
+void
+jit_emit_sw_bfe_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg, int lsb, int len)
+{
+	uint32_t mask32;
+	uint64_t mask64;
+
+	mask32 = 0xFFFFFFFFUL >> (32-len);
+	mask64 = 0xFFFFFFFFFFFFFFFFULL >> (64-len);
+	mask64 <<= lsb;
+
+	if (w64) {
+		if (check_signed32(mask64))
+			jit_emit_mov_reg_simm32(code, w64, dst_reg, mask64);
+		else if (check_unsigned32(mask64))
+			jit_emit_mov_reg_imm32(code, dst_reg, mask64);
+		else
+			jit_emit_mov_reg_imm64(code, dst_reg, mask64);
+		jit_emit_and_reg_reg(code, w64, dst_reg, src_reg);
+		if (lsb > 0)
+			jit_emit_shift_reg_imm8(code, w64, 0, dst_reg, lsb);
+	} else {
+		jit_emit_mov_reg_reg(code, w64, dst_reg, src_reg);
+		if (lsb > 0)
+			jit_emit_shift_reg_imm8(code, w64, 0, dst_reg, lsb);
+		jit_emit_and_reg_imm32(code, w64, dst_reg, mask32);
+	}
+}
+
 int
 jit_tgt_reg_empty_weight(jit_ctx_t ctx, int reg)
 {
@@ -1346,13 +1375,10 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 		break;
 
 	case JITOP_BFE:
-		if (have_bmi1) {
-		} else {
-		}
+		jit_emit_sw_bfe_reg(ctx->codebuf, w64, params[0], params[1], params[2], params[3]);
 		break;
 
 	case JITOP_CLZ:
-		printf("have_lzcnt: %d\n", have_lzcnt);
 		if (have_lzcnt) {
 			jit_emit_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1]);
 		} else {

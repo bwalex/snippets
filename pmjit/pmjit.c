@@ -737,13 +737,13 @@ jit_emit_clz(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1)
 }
 
 void
-jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t hi, uint8_t lo)
+jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t lsb, uint8_t len)
 {
 	jit_bb_t bb = _cur_block(ctx);
 	jit_tmp_state_t ts = GET_TMP_STATE(ctx, r1);
 	int dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
 
-	jit_emitv(ctx, JITOP_BSWAP, dw, "rrII", dst, r1, (uint64_t)hi, (uint64_t)lo);
+	jit_emitv(ctx, JITOP_BSWAP, dw, "rrII", dst, r1, (uint64_t)lsb, (uint64_t)len);
 }
 
 void
