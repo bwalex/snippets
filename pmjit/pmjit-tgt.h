@@ -7,6 +7,8 @@ typedef struct jit_tgt_op_def {
 	const char	*alias;
 	const char	*o_restrict;
 	const char	*i_restrict;
+
+	int		check_needed;
 } const *jit_tgt_op_def_t;
 
 
@@ -23,6 +25,7 @@ struct jit_tgt_label {
 
 void jit_tgt_init(void);
 void jit_tgt_ctx_init(jit_ctx_t ctx);
+int jit_tgt_feature_check(jit_ctx_t ctx, jit_op_t op);
 
 void jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params);
 
@@ -35,6 +38,14 @@ void jit_tgt_ctx_finish_emit(jit_ctx_t ctx);
 
 extern struct jit_tgt_op_def const tgt_op_def[];
 extern const int jit_tgt_stack_base_reg;
+
+static
+inline
+void
+jit_emit8_at(uint8_t *buf, uint8_t u8)
+{
+	*buf++ = u8;
+}
 
 static
 inline

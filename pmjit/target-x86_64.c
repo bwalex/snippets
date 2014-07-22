@@ -101,7 +101,11 @@
 #define OPC_SHIFT_RM_IMM	0xC1
 
 #define OPC_JMP			0xE9
+#define OPC_JMP_REL8		0xEB
 #define OPC_JMP_CC		0x80
+#define OPC_JMP_CC_REL8		0x70
+
+#define OPC_INC			0xFF
 
 #define OPC_RET			0xC3
 
@@ -112,6 +116,8 @@
 #define OPC_POP_REG		0x58
 #define OPC_ENTER		0xC8
 #define OPC_LEAVE		0xC9
+
+#define OPC_LZCNT		0xBD
 
 #define OPC_SHIFT_RM_CL		0xD3
 #define OPC_TEST_RM_REG		0x85
@@ -129,7 +135,7 @@
 /* ModR/M reg field special values */
 #define MODRM_REG_MOV_IMM	0x0
 #define MODRM_REG_AND_IMM	0x4
-#define MODRM_REG_CMP_IMM	0x0
+#define MODRM_REG_CMP_IMM	0x7
 #define MODRM_REG_OR_IMM	0x1
 #define MODRM_REG_XOR_IMM	0x6
 #define MODRM_REG_SHL		0x4
@@ -138,6 +144,7 @@
 #define MODRM_REG_SUB_IMM	0x5
 #define MODRM_REG_NOT		0x2
 #define MODRM_REG_SETCC		0x0
+#define MODRM_REG_INC		0x0
 
 
 /*
@@ -275,6 +282,46 @@ static int have_bmi1;
 static int have_bmi2;
 
 static
+int32_t
+calculate_disp32(uintptr_t tgt, uintptr_t reloc)
+{
+	uintptr_t diff;
+	int32_t disp;
+
+	if ((uintptr_t)tgt > (uintptr_t)reloc) {
+		diff = (uintptr_t)tgt - (uintptr_t)reloc - 4;
+		disp = (int32_t)diff;
+	} else {
+		diff = (uintptr_t)reloc - (uintptr_t)tgt + 4;
+		disp = -(int32_t)diff;
+	}
+
+	assert (diff <= INT32_MAX);
+
+	return disp;
+}
+
+static
+int8_t
+calculate_disp8(uintptr_t tgt, uintptr_t reloc)
+{
+	uintptr_t diff;
+	int8_t disp;
+
+	if ((uintptr_t)tgt > (uintptr_t)reloc) {
+		diff = (uintptr_t)tgt - (uintptr_t)reloc - 1;
+		disp = (int8_t)diff;
+	} else {
+		diff = (uintptr_t)reloc - (uintptr_t)tgt + 1;
+		disp = -(int8_t)diff;
+	}
+
+	assert (diff <= INT8_MAX);
+
+	return disp;
+}
+
+static
 void
 jit_emit_rex(jit_codebuf_t code, int w64, int r_reg_ext, int x_sib_ext, int b_rm_ext)
 {
@@ -410,7 +457,7 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, uint8_t o
 
 static
 void
-jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, int zerof_prefix, int force_rex, uint8_t opc, uint8_t reg,
+jit_emit_opc1_reg_regrm2(jit_codebuf_t code, int w64, int f3_prefix, int zerof_prefix, int force_rex, uint8_t opc, uint8_t reg,
     uint8_t rm_reg)
 {
 	uint8_t modrm;
@@ -425,11 +472,22 @@ jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, int zerof_prefix, int force
 
 	modrm = (MODRM_MOD_RM_REG << 6) | (reg << 3) | (rm_reg);
 
+	if (f3_prefix)
+		jit_emit8(code, 0xF3);
+
 	if (zerof_prefix)
 		jit_emit8(code, OPC_ZEROF_PREFIX);
 
 	jit_emit8(code, opc);
 	jit_emit8(code, modrm);
+}
+
+static
+void
+jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, int zerof_prefix, int force_rex, uint8_t opc, uint8_t reg,
+    uint8_t rm_reg)
+{
+	jit_emit_opc1_reg_regrm2(code, w64, 0, zerof_prefix, force_rex, opc, reg, rm_reg);
 }
 
 static
@@ -489,6 +547,13 @@ void
 jit_emit_sub_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_SUB_REG_RM, dst_reg, src_reg);
+}
+
+static
+void
+jit_emit_inc_reg(jit_codebuf_t code, int w64, uint8_t regrm)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_INC, MODRM_REG_INC, regrm);
 }
 
 static
@@ -572,16 +637,9 @@ jit_emit_bswap_reg(jit_codebuf_t code, int w64, uint8_t reg)
 
 static
 void
-jit_emit_clz_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
+jit_emit_lzcnt_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 {
-	int reg_ext = reg & 0x8;
-	int rm_ext = rm_reg & 0x8;
-
-	reg &= 0x7;
-	rm_reg &= 0x7;
-	/* XXX: deal with ZF */
-	/* XXX: convert from index-of-MSB1 to leading-zeroes */
-	/* XXX: this is just plain wrong */
+	jit_emit_opc1_reg_regrm2(code, w64, 1, 1, 0, OPC_LZCNT, reg, rm_reg);
 }
 
 static
@@ -818,6 +876,59 @@ jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
 }
 
 static
+uintptr_t
+jit_emit_jmp_internal(jit_codebuf_t code)
+{
+	uintptr_t reloc;
+
+	jit_emit8(code, OPC_JMP);
+	reloc = (uintptr_t)code->emit_ptr;
+	jit_emit32(code, 0xDEADC0DE);
+
+	return reloc;
+}
+
+static
+uintptr_t
+jit_emit_jcc_internal(jit_codebuf_t code, int cc)
+{
+	uintptr_t reloc;
+
+	jit_emit8(code, OPC_ZEROF_PREFIX);
+	jit_emit8(code, OPC_JMP_CC + cc);
+	reloc = (uintptr_t)code->emit_ptr;
+	jit_emit32(code, 0xDEADC0DE);
+
+	return reloc;
+}
+
+static
+uintptr_t
+jit_emit_jmp_rel8_internal(jit_codebuf_t code)
+{
+	uintptr_t reloc;
+
+	jit_emit8(code, OPC_JMP_REL8);
+	reloc = (uintptr_t)code->emit_ptr;
+	jit_emit8(code, 0x00);
+
+	return reloc;
+}
+
+static
+uintptr_t
+jit_emit_jcc_rel8_internal(jit_codebuf_t code, int cc)
+{
+	uintptr_t reloc;
+
+	jit_emit8(code, OPC_JMP_CC_REL8 + cc);
+	reloc = (uintptr_t)code->emit_ptr;
+	jit_emit8(code, 0x00);
+
+	return reloc;
+}
+
+static
 void
 jit_emit_cmovcc_reg_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg, uint8_t src_reg)
 {
@@ -831,6 +942,49 @@ jit_emit_setcc_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg)
 	jit_emit_opc1_reg_regrm(code, w64, 1,
 	    (dst_reg == REG_RBP || dst_reg == REG_RSP || dst_reg == REG_RSI || dst_reg == REG_RDI),
 	OPC_SET_CC + cc, MODRM_REG_SETCC, dst_reg);
+}
+
+static
+void
+jit_emit_sw_lzcnt_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg, uint8_t ereg0)
+{
+	uintptr_t label_max, loop, label;
+	uintptr_t label_max_reloc, loop_reloc, label_reloc;
+	int dst_ext = dst_reg & 0x8;
+	int src_ext = src_reg & 0x8;
+	int e0_ext = ereg0 & 0x8;
+
+	dst_reg &= 0x7;
+	src_reg &= 0x7;
+	ereg0 &= 0x7;
+
+	jit_emit_cmp_reg_imm32(code, w64, src_reg, 0);
+	label_max_reloc = jit_emit_jcc_rel8_internal(code, cc_to_code[CMP_EQ]);
+
+	jit_emit_xor_reg_reg(code, w64, dst_reg, dst_reg);
+	jit_emit_mov_reg_reg(code, w64, ereg0, src_reg);
+
+	/* loop: */
+	loop = (uintptr_t)code->emit_ptr;
+	jit_emit_shift_reg_imm8(code, w64, 1, ereg0, 1);
+	label_reloc = jit_emit_jcc_rel8_internal(code, 2 /* JC */);
+	jit_emit_inc_reg(code, w64, dst_reg);
+	loop_reloc = jit_emit_jmp_rel8_internal(code);
+
+	/* label_max: */
+	label_max = (uintptr_t)code->emit_ptr;
+	jit_emit_mov_reg_imm32(code, dst_reg, w64 ? 64 : 32);
+	/* label: */
+	label = (uintptr_t)code->emit_ptr;
+
+	jit_emit8_at((void *)label_max_reloc,
+	    calculate_disp8(label_max, label_max_reloc));
+
+	jit_emit8_at((void *)label_reloc,
+	    calculate_disp8(label, label_reloc));
+
+	jit_emit8_at((void *)loop_reloc,
+	    calculate_disp8(loop, loop_reloc));
 }
 
 int
@@ -933,6 +1087,21 @@ jit_tgt_reg_restrict(jit_ctx_t ctx, jit_op_t op, char constraint)
 	}
 
 	return rs;
+}
+
+/*
+ * Returns how many extra registers are needed, depending
+ * on a CPU-feature check.
+ */
+int
+jit_tgt_feature_check(jit_ctx_t ctx, jit_op_t op)
+{
+	switch (op) {
+	case JITOP_CLZ:
+		return (have_lzcnt) ? 0 : 1;
+	default:
+		return 0;
+	}
 }
 
 void
@@ -1167,6 +1336,27 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 		jit_emit_setcc_reg(ctx->codebuf, w64, test_cc_to_code[params[1]], params[0]);
 		break;
 
+	case JITOP_CLZ:
+		printf("have_lzcnt: %d\n", have_lzcnt);
+		if (have_lzcnt) {
+			//params[0], params[1]
+			jit_emit_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1]);
+		} else {
+			//params[0], params[1], params[2]
+			jit_emit_sw_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1], params[2]);
+		}
+		break;
+
+	case JITOP_NOT:
+		assert (params[0] == params[1]);
+		jit_emit_not_(ctx->codebuf, w64, params[0]);
+		break;
+
+	case JITOP_BSWAP:
+		assert (params[0] == params[1]);
+		jit_emit_bswap_reg(ctx->codebuf, w64, params[0]);
+		break;
+
 	default:
 		printf("unhandled: %s.%d\n", op_def[op].mnemonic, dw);
 		break;
@@ -1288,7 +1478,6 @@ jit_tgt_ctx_finish_emit(jit_ctx_t ctx)
 	void **epi;
 	struct x86_reloc *reloc;
 	jit_label_t label;
-	uintptr_t diff;
 	int32_t disp;
 
 	x86_ctx_t x86_ctx = (x86_ctx_t)ctx->tgt_ctx;
@@ -1305,16 +1494,7 @@ jit_tgt_ctx_finish_emit(jit_ctx_t ctx)
 
 	dyn_array_foreach(&x86_ctx->relocs, reloc) {
 		label = reloc->label;
-		if ((uintptr_t)label->tgt_info > (uintptr_t)reloc->loc) {
-			diff = (uintptr_t)label->tgt_info - (uintptr_t)reloc->loc - 4;
-			disp = (int32_t)diff;
-		} else {
-			diff = (uintptr_t)reloc->loc - (uintptr_t)label->tgt_info + 4;
-			disp = -(int32_t)diff;
-		}
-
-		assert (diff <= INT32_MAX);
-
+		disp = calculate_disp32((uintptr_t)label->tgt_info, (uintptr_t)reloc->loc);
 		jit_emit32_at(reloc->loc, (uint32_t)disp);
 	}
 }
@@ -1422,67 +1602,67 @@ jit_tgt_init(void)
 }
 
 struct jit_tgt_op_def const tgt_op_def[] = {
-	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_ANDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_OR]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_ORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_XOR]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_XORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_ADD]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_ANDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_OR]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_ORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_XOR]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_XORI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_ADD]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	/* LEA r32/64, m XXX */
-	[JITOP_ADDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
+	[JITOP_ADDI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	/* LEA r32/64, m XXX */
-	[JITOP_SUB]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_SUBI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_SHL]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
-	[JITOP_SHLI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_SHR]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c" },
-	[JITOP_SHRI]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_MOV]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_MOV_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_MOVI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_NOT]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BSWAP]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_SUB]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_SUBI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_SHL]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c", .check_needed = 0 },
+	[JITOP_SHLI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_SHR]	= { .alias = "0", .o_restrict = "", .i_restrict = "-c", .check_needed = 0 },
+	[JITOP_SHRI]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_MOV]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_MOV_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_MOVI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_NOT]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BSWAP]	= { .alias = "0", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CLZ]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 1 },
 	/* LZCNT (VEX stuff?) */
-	[JITOP_BFE]     = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_BFE]     = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	/* BEXTR (needs VEX stuff...) */
-	[JITOP_LDRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_LDRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_LDRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_LDRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRR]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	/* MOVSX for dw={8, 16, 32} */
-	[JITOP_LDRI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_LDRR_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_LDRBPO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_LDRBPSO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_LDRI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRR_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRBPO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRBPSO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 
-	[JITOP_STRI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_STRR]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_STRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_STRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BRANCH]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BNCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BNCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BNTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_BNTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_RET]	= { .alias = "", .o_restrict = "", .i_restrict = "a" },
-	[JITOP_RETI]	= { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_CSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_TMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_TMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_TSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_TSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_TSET]    = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_TSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "" },
-	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "" },
+	[JITOP_STRI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_STRR]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_STRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_STRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BRANCH]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BNCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BNCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BNTEST]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_BNTESTI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_RET]	= { .alias = "", .o_restrict = "", .i_restrict = "a", .check_needed = 0 },
+	[JITOP_RETI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CSET]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_CSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_TMOV]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_TMOVI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_TSEL]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_TSELI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_TSET]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_TSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 };

@@ -43,7 +43,8 @@ int main(void)
 	jit_emit_or(ctx, e, e, d);
 	jit_emit_or(ctx, e, e, b);
 	jit_emit_btesti(ctx, l0, TST_Z, e, 0x00ff00ff);
-	jit_emit_ret(ctx, e);
+	jit_emit_clz(ctx, f, e);
+	jit_emit_ret(ctx, f);
 	jit_emit_set_label(ctx, l0);
 	jit_emit_reti(ctx, -1);
 

@@ -1498,9 +1498,10 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 	int op_dw = JITOP_OP_DW(opc);
 	jit_op_def_t def = &op_def[op];
 	jit_tgt_op_def_t tgt_def = &tgt_op_def[op];
-	int idx;
+	int i, idx;
 	int reg, old_reg;
 	int cnt;
+	int extra_regs = 0;
 	uint64_t tparams[16];
 	uint64_t tparams2[16];
 	jit_regset_t current_choice = ctx->overall_choice;
@@ -1652,13 +1653,28 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		}
 	}
 
-	/*
-	 * Allocate output argument registers
-	 */
-	current_choice = ctx->overall_choice;
+	if (tgt_def->check_needed) {
+		extra_regs = jit_tgt_feature_check(ctx, op);
+		assert (extra_regs >= 0);
+		idx = def->in_args + def->out_args;
+		for (i = 0; i < extra_regs; i++, idx++) {
+			jit_regset_full(limited_choice);
+			restricted_choice = jit_regset_intersection(current_choice, limited_choice);
+			tmp = _jit_new_tmp(ctx, 0, 0, 1);
+			reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0);
+			tparams[idx] = reg;
+			jit_regset_clear(current_choice, reg);
+		}
+	}
 
-	/* XXX: expire temps in regs (dead ones, anyway) - generation needs fixing */
-	expire_regs(ctx, bb);
+	if (extra_regs == 0) {
+		/*
+		 * Allocate output argument registers
+		 */
+		current_choice = ctx->overall_choice;
+
+		expire_regs(ctx, bb);
+	}
 
 	/* Clear the aliased registers from the available selection */
 	for (idx = def->out_args-1; idx >= 0; idx--) {
@@ -1673,7 +1689,13 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		tmp = params[idx];
 		ts = GET_TMP_STATE(ctx, tmp);
 
-		if ((int)sizeof(tgt_def->alias) > idx && tgt_def->alias[idx] >= '0') {
+		/*
+		 * If extra registers are needed, this implies a non-optimal
+		 * software emulation of an instruction, so we ignore aliases
+		 * and allocate as many registers as required.
+		 */
+		if ((int)sizeof(tgt_def->alias) > idx && tgt_def->alias[idx] >= '0' &&
+		    (extra_regs == 0)) {
 			/*
 			 * The destination register will have to be the same as one of the
 			 * source registers.
