@@ -949,45 +949,27 @@ jit_emit_setcc_reg(jit_codebuf_t code, int w64, int cc, uint8_t dst_reg)
 
 static
 void
-jit_emit_sw_lzcnt_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg, uint8_t ereg0)
+jit_emit_bsr_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rmreg)
 {
-	uintptr_t label_max, loop, label;
-	uintptr_t label_max_reloc, loop_reloc, label_reloc;
-	int dst_ext = dst_reg & 0x8;
-	int src_ext = src_reg & 0x8;
-	int e0_ext = ereg0 & 0x8;
+	jit_emit_opc1_reg_regrm(code, w64, 1, 0, OPC_BSR_REG, reg, rmreg);
+}
 
-	dst_reg &= 0x7;
-	src_reg &= 0x7;
-	ereg0 &= 0x7;
+static
+void
+jit_emit_sw_lzcnt_reg_reg(jit_codebuf_t code, int w64, uint8_t dst_reg, uint8_t src_reg)
+{
+	uintptr_t label;
+	uintptr_t label_reloc;
 
-	jit_emit_cmp_reg_imm32(code, w64, src_reg, 0);
-	label_max_reloc = jit_emit_jcc_rel8_internal(code, cc_to_code[CMP_EQ]);
+	jit_emit_bsr_reg_reg(code, w64, dst_reg, src_reg);
+	label_reloc = jit_emit_jcc_rel8_internal(code, cc_to_code[CMP_NE] /* JNZ */);
+	jit_emit_mov_reg_imm32(code, dst_reg, w64 ? 127 : 63);
 
-	jit_emit_xor_reg_reg(code, w64, dst_reg, dst_reg);
-	jit_emit_mov_reg_reg(code, w64, ereg0, src_reg);
-
-	/* loop: */
-	loop = (uintptr_t)code->emit_ptr;
-	jit_emit_shift_reg_imm8(code, w64, 1, ereg0, 1);
-	label_reloc = jit_emit_jcc_rel8_internal(code, 2 /* JC */);
-	jit_emit_inc_reg(code, w64, dst_reg);
-	loop_reloc = jit_emit_jmp_rel8_internal(code);
-
-	/* label_max: */
-	label_max = (uintptr_t)code->emit_ptr;
-	jit_emit_mov_reg_imm32(code, dst_reg, w64 ? 64 : 32);
-	/* label: */
 	label = (uintptr_t)code->emit_ptr;
-
-	jit_emit8_at((void *)label_max_reloc,
-	    calculate_disp8(label_max, label_max_reloc));
+	jit_emit_xor_reg_imm32(code, w64, dst_reg, w64 ? 63 : 31);
 
 	jit_emit8_at((void *)label_reloc,
 	    calculate_disp8(label, label_reloc));
-
-	jit_emit8_at((void *)loop_reloc,
-	    calculate_disp8(loop, loop_reloc));
 }
 
 int
@@ -1101,7 +1083,7 @@ jit_tgt_feature_check(jit_ctx_t ctx, jit_op_t op)
 {
 	switch (op) {
 	case JITOP_CLZ:
-		return (have_lzcnt) ? 0 : 1;
+		return 0;
 	default:
 		return 0;
 	}
@@ -1353,17 +1335,6 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 		jit_emit_setcc_reg(ctx->codebuf, w64, test_cc_to_code[params[1]], params[0]);
 		break;
 
-	case JITOP_CLZ:
-		printf("have_lzcnt: %d\n", have_lzcnt);
-		if (have_lzcnt) {
-			//params[0], params[1]
-			jit_emit_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1]);
-		} else {
-			//params[0], params[1], params[2]
-			jit_emit_sw_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1], params[2]);
-		}
-		break;
-
 	case JITOP_NOT:
 		assert (params[0] == params[1]);
 		jit_emit_not_(ctx->codebuf, w64, params[0]);
@@ -1373,6 +1344,22 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 		assert (params[0] == params[1]);
 		jit_emit_bswap_reg(ctx->codebuf, w64, params[0]);
 		break;
+
+	case JITOP_BFE:
+		if (have_bmi1) {
+		} else {
+		}
+		break;
+
+	case JITOP_CLZ:
+		printf("have_lzcnt: %d\n", have_lzcnt);
+		if (have_lzcnt) {
+			jit_emit_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1]);
+		} else {
+			jit_emit_sw_lzcnt_reg_reg(ctx->codebuf, w64, params[0], params[1]);
+		}
+		break;
+
 
 	default:
 		printf("unhandled: %s.%d\n", op_def[op].mnemonic, dw);
