@@ -7,17 +7,16 @@ typedef struct jit_tgt_op_def {
 	const char	*i_restrict;
 } const *jit_tgt_op_def_t;
 
+
 struct jit_tgt_reloc {
-	void		*pc;
+	void		*loc;
 };
 
 struct jit_tgt_label {
 	int		has_target;
 	void		*target;
 
-	int		reloc_count;
-	int		max_relocs;
-	struct jit_tgt_reloc	*relocs;
+	struct dyn_array relocs;
 };
 
 void jit_tgt_ctx_init(jit_ctx_t ctx);

@@ -117,6 +117,7 @@ struct jit_label {
 
 	int		has_target;
 	jit_bb_t	target;
+	void		*tgt_info;
 
 	struct dyn_array	relocs;
 };

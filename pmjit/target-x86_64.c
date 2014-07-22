@@ -100,8 +100,8 @@
 
 #define OPC_SHIFT_RM_IMM	0xC1
 
-#define OPC_JMP1		0x0F
-#define OPC_JMP2_CC		0x80
+#define OPC_JMP			0xE9
+#define OPC_JMP_CC		0x80
 
 #define OPC_RET			0xC3
 
@@ -142,11 +142,15 @@
  *      default...
  */
 
+struct x86_reloc
+{
+	void		*loc;
+	jit_label_t	label;
+};
 
 typedef struct x86_ctx {
-	void	**epilogues;
-	int	epilogues_sz;
-	int	epilogues_cnt;
+	struct dyn_array epilogues;
+	struct dyn_array relocs;
 } *x86_ctx_t;
 
 typedef enum {
@@ -228,6 +232,28 @@ static const int fn_arg_regs[] = {
 	REG_RCX,
 	REG_R8,
 	REG_R9
+};
+
+static const int cc_to_code[] = {
+	[CMP_EQ] = 4,
+	[CMP_NE] = 5,
+
+	[CMP_AE] = 3,
+	[CMP_B]  = 2,
+	[CMP_A]  = 7,
+	[CMP_BE] = 6,
+
+	[CMP_LT] = 12,
+	[CMP_GE] = 13,
+	[CMP_LE] = 14,
+	[CMP_GT] = 15
+};
+
+static const int test_cc_to_code[] = {
+	[TST_Z]       = 4,
+	[TST_NZ]      = 5,
+	[TST_MSB_SET] = 8,
+	[TST_MSB_CLR] = 9
 };
 
 #define FN_ARG_REG_CNT		(int)((sizeof(fn_arg_regs)/sizeof(int)))
@@ -457,7 +483,7 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, uint8_t o
 
 	if (use_disp) {
 		if (rip_relative) {
-			disp = (int32_t)((code->code_ptr +4) - abs);
+			disp = (int32_t)((code->emit_ptr + 4) - abs);
 			jit_emit32(code, disp);
 		} else if (use_disp8) {
 			jit_emit8(code, disp8);
@@ -640,12 +666,14 @@ jit_emit_shift_reg_cl(jit_codebuf_t code, int w64, int left, uint8_t rm_reg)
 }
 
 void
-jit_emit_cmp_reg_imm32(jit_codebuf_t code, uint8_t rm_reg, uint32_t imm)
+jit_emit_cmp_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
 	if (rm_reg == REG_RAX) {
+		if (w64)
+			jit_emit_rex(code, w64, 0, 0, 0);
 		jit_emit8(code, OPC_CMP_EAX_IMM32);
 	} else {
-		jit_emit_opc1_reg_regrm(code, 0, 0, 0, OPC_CMP_RM_IMM32,
+		jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_CMP_RM_IMM32,
 		    MODRM_REG_CMP_IMM, rm_reg);
 	}
 	jit_emit32(code, imm);
@@ -658,21 +686,12 @@ jit_emit_cmp_reg_reg(jit_codebuf_t code, int w64, uint8_t reg, uint8_t rm_reg)
 }
 
 void
-jit_emit_test_reg_imm32(jit_codebuf_t code, uint8_t rm_reg, uint32_t imm)
+jit_emit_test_reg_imm32(jit_codebuf_t code, int w64, uint8_t rm_reg, uint32_t imm)
 {
-	jit_emit_opc1_reg_regrm(code, 0, 0, 0, OPC_TEST_RM_IMM32,
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_TEST_RM_IMM32,
 	    MODRM_REG_TEST_IMM, rm_reg);
 
 	jit_emit32(code, imm);
-}
-
-void
-jit_emit_test_reg_imm64(jit_codebuf_t code, uint8_t rm_reg, uint64_t imm)
-{
-	jit_emit_opc1_reg_regrm(code, 1, 0, 0, OPC_TEST_RM_IMM64,
-	    MODRM_REG_TEST_IMM, rm_reg);
-
-	jit_emit64(code, imm);
 }
 
 void
@@ -798,23 +817,54 @@ void
 jit_emit_ret_(jit_ctx_t ctx, jit_codebuf_t code)
 {
 	x86_ctx_t x86_ctx = (x86_ctx_t)ctx->tgt_ctx;
+	void **elem;
 
 	/*
 	 * The actual epilogue will be emitted later, whenever we know
 	 * which callee-saved registers actually need to be restored.
 	 */
-	if (x86_ctx->epilogues_cnt == x86_ctx->epilogues_sz) {
-		x86_ctx->epilogues_sz += 4;
-		x86_ctx->epilogues = realloc(x86_ctx->epilogues,
-		    x86_ctx->epilogues_sz * sizeof(void *));
-	}
-
-	x86_ctx->epilogues[x86_ctx->epilogues_cnt++] = code->emit_ptr;
+	elem = dyn_array_new_elem(&x86_ctx->epilogues);
+	*elem = code->emit_ptr;
 
 	code->code_sz += MAX_EPILOGUE_SZ;
 	code->emit_ptr += MAX_EPILOGUE_SZ;
 }
 
+static
+void
+jit_emit_reloc(jit_ctx_t ctx, jit_label_t label)
+{
+	struct x86_ctx *x86_ctx = (struct x86_ctx *)ctx->tgt_ctx;
+	struct x86_reloc *reloc;
+
+	reloc = dyn_array_new_elem(&x86_ctx->relocs);
+	reloc->loc = ctx->codebuf->emit_ptr;
+	reloc->label = label;
+	jit_emit32(ctx->codebuf, 0xDEADC0DE);
+}
+
+void
+jit_emit_jmp(jit_ctx_t ctx, jit_label_t label)
+{
+	jit_emit8(ctx->codebuf, OPC_JMP);
+	jit_emit_reloc(ctx, label);
+}
+
+void
+jit_emit_jcc(jit_ctx_t ctx, int cc, jit_label_t label)
+{
+	jit_emit8(ctx->codebuf, OPC_ZEROF_PREFIX);
+	jit_emit8(ctx->codebuf, OPC_JMP_CC + cc);
+	jit_emit_reloc(ctx, label);
+}
+
+void
+jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
+{
+	jit_emit8(ctx->codebuf, OPC_ZEROF_PREFIX);
+	jit_emit8(ctx->codebuf, OPC_JMP_CC + (1^cc));
+	jit_emit_reloc(ctx, label);
+}
 
 
 struct jit_tgt_op_def const tgt_op_def[] = {
@@ -1133,6 +1183,8 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 	int dw = JITOP_DW(opc);
 	int op_dw = JITOP_OP_DW(opc);
 	int w64 = (dw == JITOP_DW_64);
+	int op_w64 = (op_dw == JITOP_DW_64);
+	jit_label_t label;
 
 	switch (op) {
 	case JITOP_MOV:
@@ -1226,6 +1278,64 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 
 	case JITOP_RET:
 		jit_emit_ret_(ctx, ctx->codebuf);
+		break;
+
+	case JITOP_BRANCH:
+		label = (jit_label_t)params[0];
+		jit_emit_jmp(ctx, params[0]);
+		break;
+
+	case JITOP_BCMP:
+		label = (jit_label_t)params[0];
+		jit_emit_cmp_reg_reg(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jcc(ctx, cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BCMPI:
+		label = (jit_label_t)params[0];
+		jit_emit_cmp_reg_imm32(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jcc(ctx, cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BNCMP:
+		label = (jit_label_t)params[0];
+		jit_emit_cmp_reg_reg(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jncc(ctx, cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BNCMPI:
+		label = (jit_label_t)params[0];
+		jit_emit_cmp_reg_imm32(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jncc(ctx, cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BTEST:
+		label = (jit_label_t)params[0];
+		jit_emit_test_reg_reg(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jcc(ctx, test_cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BTESTI:
+		label = (jit_label_t)params[0];
+		jit_emit_test_reg_imm32(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jcc(ctx, test_cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BNTEST:
+		label = (jit_label_t)params[0];
+		jit_emit_test_reg_reg(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jncc(ctx, test_cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_BNTESTI:
+		label = (jit_label_t)params[0];
+		jit_emit_test_reg_imm32(ctx->codebuf, op_w64, params[2], params[3]);
+		jit_emit_jncc(ctx, test_cc_to_code[params[1]], label);
+		break;
+
+	case JITOP_SET_LABEL:
+		label = (jit_label_t)params[0];
+		label->tgt_info = ctx->codebuf->emit_ptr;
 		break;
 
 	default:
@@ -1348,17 +1458,37 @@ jit_tgt_ctx_finish_emit(jit_ctx_t ctx)
 {
 	int i;
 	size_t orig_size;
+	void **epi;
+	struct x86_reloc *reloc;
+	jit_label_t label;
+	uintptr_t diff;
+	int32_t disp;
 
 	x86_ctx_t x86_ctx = (x86_ctx_t)ctx->tgt_ctx;
 
 	emit_prologue(ctx);
 
-	for (i = 0; i < x86_ctx->epilogues_cnt; i++) {
+	dyn_array_foreach(&x86_ctx->epilogues, epi) {
 		orig_size = ctx->codebuf->code_sz;
-		ctx->codebuf->emit_ptr = x86_ctx->epilogues[i];
+		ctx->codebuf->emit_ptr = *epi;
 		emit_epilogue(ctx);
 		assert (ctx->codebuf->code_sz - orig_size <= MAX_EPILOGUE_SZ);
 		ctx->codebuf->code_sz = orig_size;
+	}
+
+	dyn_array_foreach(&x86_ctx->relocs, reloc) {
+		label = reloc->label;
+		if ((uintptr_t)label->tgt_info > (uintptr_t)reloc->loc) {
+			diff = (uintptr_t)label->tgt_info - (uintptr_t)reloc->loc - 4;
+			disp = (int32_t)diff;
+		} else {
+			diff = (uintptr_t)reloc->loc - (uintptr_t)label->tgt_info + 4;
+			disp = -(int32_t)diff;
+		}
+
+		assert (diff <= INT32_MAX);
+
+		jit_emit32_at(reloc->loc, (uint32_t)disp);
 	}
 }
 
@@ -1370,6 +1500,11 @@ jit_tgt_ctx_init(jit_ctx_t ctx)
 	x86_ctx = malloc(sizeof(*x86_ctx));
 	assert (x86_ctx != NULL);
 	memset(x86_ctx, 0, sizeof(*x86_ctx));
+
+	dyn_array_init(&x86_ctx->epilogues, sizeof(void *), 4, NULL, NULL, NULL);
+	dyn_array_init(&x86_ctx->relocs, sizeof(struct x86_reloc), 8, NULL, NULL,
+	    NULL);
+
 	ctx->tgt_ctx = x86_ctx;
 
 	jit_regset_empty(ctx->overall_choice);

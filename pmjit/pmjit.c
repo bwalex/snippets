@@ -78,12 +78,12 @@ struct jit_op_def const op_def[] = {
 	[JITOP_BRANCH]	= { .mnemonic = "b",       .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 1, .fmt = "l"     },
 	[JITOP_BCMP]	= { .mnemonic = "bcmp",    .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcrr"  },
 	[JITOP_BCMPI]	= { .mnemonic = "bcmpi",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcri"  },
-	[JITOP_BNCMP]	= { .mnemonic = "bncmp",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lcrr"  },
-	[JITOP_BNCMPI]	= { .mnemonic = "bncmpi",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lcri"  },
-	[JITOP_BTEST]	= { .mnemonic = "btest",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCrr"   },
-	[JITOP_BTESTI]	= { .mnemonic = "btesti",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCri"   },
-	[JITOP_BNTEST]	= { .mnemonic = "bntest",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCrr"   },
-	[JITOP_BNTESTI]	= { .mnemonic = "bntesti", .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 3, .fmt = "lCri"   },
+	[JITOP_BNCMP]	= { .mnemonic = "bncmp",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcrr"  },
+	[JITOP_BNCMPI]	= { .mnemonic = "bncmpi",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcri"  },
+	[JITOP_BTEST]	= { .mnemonic = "btest",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lCrr"   },
+	[JITOP_BTESTI]	= { .mnemonic = "btesti",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lCri"   },
+	[JITOP_BNTEST]	= { .mnemonic = "bntest",  .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lCrr"   },
+	[JITOP_BNTESTI]	= { .mnemonic = "bntesti", .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lCri"   },
 	[JITOP_RET]	= { .mnemonic = "ret",     .side_effects = 1, .save_locals = SAVE_NEVER,  .out_args = 0, .in_args = 1, .fmt = "r"     },
 	[JITOP_RETI]	= { .mnemonic = "reti",    .side_effects = 1, .save_locals = SAVE_NEVER,  .out_args = 0, .in_args = 1, .fmt = "i"     },
 	[JITOP_CMOV]	= { .mnemonic = "cmov",    .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 4, .fmt = "rcrr"  },
@@ -1245,6 +1245,9 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 			                                      (op_dw == JITOP_DW_16) ? "16" :
 							      (op_dw == JITOP_DW_32) ? "32" : "64");
 						break;
+					case 'C':
+						printf("<tst>");
+						break;
 					}
 					++param_idx;
 				}
@@ -1544,6 +1547,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		case 'l':
 		case 'c':
 		case 'C':
+			tparams[idx] = params[idx];
 			/* Always ok - immediate will be trimmed if necessary */
 			break;
 
