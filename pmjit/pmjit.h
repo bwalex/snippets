@@ -183,4 +183,6 @@ void jit_emit_reti(jit_ctx_t ctx, uint64_t imm);
 /* XXX: return value tmp? also make optional... */
 void jit_emit_call(jit_ctx_t, void *fn, const char *fmt, ...);
 
+void jit_init(void);
+
 #endif

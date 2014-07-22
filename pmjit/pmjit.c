@@ -2060,3 +2060,9 @@ jit_output_cfg(jit_ctx_t ctx, const char *file)
 	fclose(fp);
 	return 0;
 }
+
+void
+jit_init(void)
+{
+	jit_tgt_init();
+}

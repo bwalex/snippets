@@ -22,6 +22,8 @@ int main(void)
 	struct jit_codebuf codebuf;
 	int fd;
 
+	jit_init();
+
 	ctx = jit_new_ctx();
 	jit_init_codebuf(ctx, &codebuf);
 

@@ -269,6 +269,11 @@ const int jit_tgt_stack_base_reg = REG_RSP;
 const int jit_tgt_stack_base_reg = REG_RBP;
 #endif
 
+static int have_popcnt;
+static int have_lzcnt;
+static int have_bmi1;
+static int have_bmi2;
+
 static
 void
 jit_emit_rex(jit_codebuf_t code, int w64, int r_reg_ext, int x_sib_ext, int b_rm_ext)
@@ -1352,14 +1357,69 @@ jit_tgt_ctx_init(jit_ctx_t ctx)
 #endif
 }
 
+struct cpuid_regs
+{
+	uint32_t eax;
+	uint32_t ebx;
+	uint32_t ecx;
+	uint32_t edx;
+};
+
+/* Basic Feature Information */
+#define CPUID_ENUMERATE_BFI	0x01
+#define CPUID_BFI_ECX_AVX	(1 << 28)
+#define CPUID_BFI_ECX_POPCNT	(1 << 23)
+
+/* Structured Extended Feature Flags */
+#define CPUID_ENUMERATE_SEFF	0x07
+#define CPUID_SEFF_EBX_BMI1	(1 << 3)
+#define CPUID_SEFF_EBX_HLE	(1 << 4)
+#define CPUID_SEFF_EBX_AVX2	(1 << 5)
+#define CPUID_SEFF_EBX_BMI2	(1 << 8)
+
+/* Extended Function */
+#define CPUID_ENUMERATE_EF	0x80000001U
+#define CPUID_EF_ECX_LZCNT	(1 << 5)
+
+static
+void
+cpuid(struct cpuid_regs *regs, uint32_t eax)
+{
+	__asm__ __volatile__("cpuid"
+	    : "=a" (regs->eax),
+	      "=b" (regs->ebx),
+	      "=c" (regs->ecx),
+	      "=d" (regs->edx)
+	    : "a"  (eax),
+	      "c"  (0)
+	    : "memory");
+
+	return;
+}
 
 void
 jit_tgt_init(void)
 {
-	/* XXX: do cpuid or whatever to detect supported features */
+	struct cpuid_regs r;
+
+	cpuid(&r, CPUID_ENUMERATE_BFI);
+	have_popcnt = (r.ecx & CPUID_BFI_ECX_POPCNT);
+
+	cpuid(&r, CPUID_ENUMERATE_SEFF);
+	have_bmi1 = (r.ebx & CPUID_SEFF_EBX_BMI1);
+	have_bmi2 = (r.ebx & CPUID_SEFF_EBX_BMI2);
+
+	cpuid(&r, CPUID_ENUMERATE_EF);
+	have_lzcnt = (r.ecx & CPUID_EF_ECX_LZCNT);
+
+#if 0
+	printf("have_popcnt=%s\n", have_popcnt ? "YES" : "NO");
+	printf("have_lzcnt=%s\n", have_lzcnt ? "YES" : "NO");
+	printf("have_bmi1=%s\n", have_bmi1 ? "YES" : "NO");
+	printf("have_bmi2=%s\n", have_bmi2 ? "YES" : "NO");
+#endif
 	return;
 }
-
 
 struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_AND]	= { .alias = "0", .o_restrict = "", .i_restrict = "" },
