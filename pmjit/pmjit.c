@@ -66,15 +66,15 @@ struct jit_op_def const op_def[] = {
 	[JITOP_LDRI]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "i"     },
 	[JITOP_LDRR]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
 	[JITOP_LDRBPO]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_LDRBPSO]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "rri"   },
+	[JITOP_LDRBPSI]	= { .mnemonic = "ldr",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "rri"   },
 	[JITOP_LDRI_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "i"     },
 	[JITOP_LDRR_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 1, .fmt = "r"     },
 	[JITOP_LDRBPO_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "ri"    },
-	[JITOP_LDRBPSO_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "rri"   },
+	[JITOP_LDRBPSI_SEXT]	= { .mnemonic = "ldr.sx",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 3, .fmt = "rri"   },
 	[JITOP_STRI]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 2, .fmt = "ri"    },
 	[JITOP_STRR]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 2, .fmt = "rr"    },
 	[JITOP_STRBPO]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 3, .fmt = "rri"   },
-	[JITOP_STRBPSO]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 4, .fmt = "rrri"  },
+	[JITOP_STRBPSI]	= { .mnemonic = "str",     .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = 0, .in_args = 4, .fmt = "rrri"  },
 	[JITOP_BRANCH]	= { .mnemonic = "b",       .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 1, .fmt = "l"     },
 	[JITOP_BCMP]	= { .mnemonic = "bcmp",    .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcrr"  },
 	[JITOP_BCMPI]	= { .mnemonic = "bcmpi",   .side_effects = 1, .save_locals = SAVE_BEFORE, .out_args = 0, .in_args = 4, .fmt = "lcri"  },
@@ -747,6 +747,58 @@ jit_emit_bfe(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t r1, uint8_t lsb, uint8_t le
 }
 
 void
+jit_emit_ldr_base(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t base)
+{
+	jit_emitv(ctx, (ext_type == SEXT) ? JITOP_LDRR_SEXT : JITOP_LDRR,
+	    width, "rr", dst, base);
+}
+
+void
+jit_emit_ldr_imm(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, uint64_t imm)
+{
+	jit_emitv(ctx, (ext_type == SEXT) ? JITOP_LDRI_SEXT : JITOP_LDRI,
+	    width, "ri", dst, imm);
+}
+
+void
+jit_emit_ldr_base_disp(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t base, uint64_t imm)
+{
+	jit_emitv(ctx, (ext_type == SEXT) ? JITOP_LDRBPO_SEXT : JITOP_LDRBPO,
+	    width, "rri", dst, base, imm);
+}
+
+void
+jit_emit_ldr_base_si(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t base, jit_tmp_t index, uint8_t scale)
+{
+	jit_emitv(ctx, (ext_type == SEXT) ? JITOP_LDRBPSI_SEXT : JITOP_LDRBPSI,
+	    width, "rrri", dst, base, index, scale);
+}
+
+void
+jit_emit_str_base(jit_ctx_t ctx, int width, jit_tmp_t src, jit_tmp_t base)
+{
+	jit_emitv(ctx, JITOP_STRR, width, "rr", src, base);
+}
+
+void
+jit_emit_str_imm(jit_ctx_t ctx, int width, jit_tmp_t src, uint64_t imm)
+{
+	jit_emitv(ctx, JITOP_STRI, width, "ri", src, imm);
+}
+
+void
+jit_emit_str_base_disp(jit_ctx_t ctx, int width, jit_tmp_t src, jit_tmp_t base, uint64_t imm)
+{
+	jit_emitv(ctx, JITOP_STRBPO, width, "rri", src, base, imm);
+}
+
+void
+jit_emit_str_base_si(jit_ctx_t ctx, int width, jit_tmp_t src, jit_tmp_t base, jit_tmp_t index, uint8_t scale)
+{
+	jit_emitv(ctx, JITOP_STRBPSI, width, "rrri", src, base, index, scale);
+}
+
+void
 jit_emit_branch(jit_ctx_t ctx, jit_label_t l)
 {
 	jit_bb_t bb = _cur_block(ctx);
@@ -1140,7 +1192,7 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 			break;
 		case JITOP_LDRBPO:
 			break;
-		case JITOP_LDRBPSO:
+		case JITOP_LDRBPSI:
 			break;
 
 		case JITOP_STRI:
@@ -1149,7 +1201,7 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 			break;
 		case JITOP_STRBPO:
 			break;
-		case JITOP_STRBPSO:
+		case JITOP_STRBPSI:
 			break;
 
 		case JITOP_NOP:

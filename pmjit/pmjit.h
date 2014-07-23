@@ -135,27 +135,25 @@ void jit_emit_tseli(jit_ctx_t ctx, jit_tmp_t dst, jit_tmp_t src1, jit_tmp_t src2
 void jit_emit_tset(jit_ctx_t ctx, jit_tmp_t dst, jit_test_cc_t cc, jit_tmp_t r1, jit_tmp_t r2);
 void jit_emit_tseti(jit_ctx_t ctx, jit_tmp_t dst, jit_test_cc_t cc, jit_tmp_t r1, uint64_t imm);
 
-/* XXX: load byte, load halfword, load word, load doubleword */
-/* XXX: and same for store... */
 /* Memory: loads */
 /* r1 <- [r2] */
-void jit_emit_ldr_reg(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2);
+void jit_emit_ldr_base(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2);
 /* r1 <- [imm] */
 void jit_emit_ldr_imm(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, uint64_t imm);
 /* r1 <- [r2 + imm] */
-void jit_emit_ldr_base_imm(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2, uint64_t imm);
+void jit_emit_ldr_base_disp(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2, uint64_t imm);
 /* r1 <- [r2 + (r3 << scale)] */
-void jit_emit_ldr_base_sr(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
+void jit_emit_ldr_base_si(jit_ctx_t ctx, int width, jit_ext_type_t ext_type, jit_tmp_t dst, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
 
 /* Memory: stores */
-/* [r2] <- r1 */
-void jit_emit_str_reg(jit_ctx_t ctx, int width, jit_tmp_t r1, jit_tmp_t r2);
-/* [imm] <- r1 */
-void jit_emit_str_imm(jit_ctx_t ctx, int width, jit_tmp_t r1, uint64_t imm);
-/* [r2 + imm] <- r1 */
-void jit_emit_str_base_imm(jit_ctx_t ctx, int width, jit_tmp_t r1, jit_tmp_t r2, uint64_t imm);
-/* [r2 + (r3 << scale)] <- r1 */
-void jit_emit_str_base_sr(jit_ctx_t ctx, int width, jit_tmp_t r1, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
+/* [r2] <- src */
+void jit_emit_str_base(jit_ctx_t ctx, int width, jit_tmp_t src, jit_tmp_t r2);
+/* [imm] <- src */
+void jit_emit_str_imm(jit_ctx_t ctx, int width, jit_tmp_t src, uint64_t imm);
+/* [r2 + imm] <- src */
+void jit_emit_str_base_disp(jit_ctx_t ctx, int width, jit_tmp_t src, jit_tmp_t r2, uint64_t imm);
+/* [r2 + (r3 << scale)] <- src */
+void jit_emit_str_base_si(jit_ctx_t ctx, int width, jit_tmp_t src, jit_tmp_t r2, jit_tmp_t r3, uint8_t scale);
 
 jit_ctx_t jit_new_ctx(void);
 void jit_free_ctx(jit_ctx_t ctx);

@@ -55,7 +55,11 @@ int main(void)
 	printf("\n=== Post-optimization IR: ===\n");
 	jit_print_ir(ctx);
 
+	jit_resolve_links(ctx);
+
 	jit_process(ctx);
+
+	jit_output_cfg(ctx, "cfg.dot");
 
 	fd = open("jit.raw", O_WRONLY | O_CREAT | O_TRUNC);
 	assert (fd > 0);

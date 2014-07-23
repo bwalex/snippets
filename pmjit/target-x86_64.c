@@ -46,6 +46,7 @@
 
 #define OPC_MOV_REG_RM		0x8B
 #define OPC_MOV_RM_REG		0x89
+#define OPC_MOV_RM_REG8		0x88
 #define OPC_MOV_REG_IMM32	0xB8
 #define OPC_MOV_RM_IMM32	0xC7
 
@@ -109,6 +110,7 @@
 #define OPC_JMP_CC_REL8		0x70
 
 #define OPC_INC			0xFF
+#define OPC_DEC			0xFF
 
 #define OPC_RET			0xC3
 
@@ -128,6 +130,7 @@
 #define OPC_TEST_RM_IMM64	0xF7
 #define MODRM_REG_TEST_IMM	0x00 /* XXX: or 0x01 - what do they mean? */
 
+#define PREFIX_OP_SIZE		0x66
 
 /* ModR/M mod field values */
 #define MODRM_MOD_DISP0		0x0
@@ -148,6 +151,7 @@
 #define MODRM_REG_NOT		0x2
 #define MODRM_REG_SETCC		0x0
 #define MODRM_REG_INC		0x0
+#define MODRM_REG_DEC		0x1
 
 
 /*
@@ -363,7 +367,7 @@ jit_emit_sib(jit_codebuf_t code, int scale_factor, uint8_t index, uint8_t base)
 
 static
 void
-jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, uint8_t opc, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
+jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, int force_rex, uint8_t opc, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
 {
 	int no_base = (reg_base == NO_REG);
 	int no_index = (reg_index == NO_REG);
@@ -434,7 +438,7 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, uint8_t o
 
 	modrm = ((mod & 0x3) << 6) | ((reg & 0x7) << 3) | (rm & 0x7);
 
-	if (w64 || reg_ext || base_ext || index_ext)
+	if (w64 || reg_ext || base_ext || index_ext || force_rex)
 		jit_emit_rex(code, w64, reg_ext, index_ext, base_ext);
 
 	if (zerof_prefix)
@@ -491,6 +495,62 @@ jit_emit_opc1_reg_regrm(jit_codebuf_t code, int w64, int zerof_prefix, int force
     uint8_t rm_reg)
 {
 	jit_emit_opc1_reg_regrm2(code, w64, 0, zerof_prefix, force_rex, opc, reg, rm_reg);
+}
+
+static
+void
+jit_emit_common_load(jit_codebuf_t code, int dw, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
+{
+	int w64 = (JITOP_DW_64);
+
+	if (dw == JITOP_DW_64 || dw == JITOP_DW_32)
+		jit_emit_opc1_reg_memrm(code, w64, 0, 0, OPC_MOV_REG_RM, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	else if (dw == JITOP_DW_16)
+		jit_emit_opc1_reg_memrm(code, 0, 1, 0, OPC_MOVZX16, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	else
+		jit_emit_opc1_reg_memrm(code, 0, 1, 0, OPC_MOVZX8, reg,
+		    reg_base, reg_index, scale, disp, abs);
+}
+
+static
+void
+jit_emit_common_load_sext(jit_codebuf_t code, int dw, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
+{
+	int w64 = (JITOP_DW_64);
+
+	if (dw == JITOP_DW_64)
+		jit_emit_opc1_reg_memrm(code, w64, 0, 0, OPC_MOV_REG_RM, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	else if (dw == JITOP_DW_32)
+		jit_emit_opc1_reg_memrm(code, 1, 0, 0, OPC_MOVSX32, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	else if (dw == JITOP_DW_16)
+		jit_emit_opc1_reg_memrm(code, 1, 1, 0, OPC_MOVSX16, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	else
+		jit_emit_opc1_reg_memrm(code, 1, 1, 0, OPC_MOVSX8, reg,
+		    reg_base, reg_index, scale, disp, abs);
+}
+
+static
+void
+jit_emit_common_store(jit_codebuf_t code, int dw, uint8_t reg, uint8_t reg_base, uint8_t reg_index, int scale, int32_t disp, uint64_t abs)
+{
+	int w64 = (JITOP_DW_64);
+
+	if (dw == JITOP_DW_64 || JITOP_DW_32) {
+		jit_emit_opc1_reg_memrm(code, w64, 0, 0, OPC_MOV_RM_REG, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	} else if (dw == JITOP_DW_16) {
+		jit_emit8(code, PREFIX_OP_SIZE);
+		jit_emit_opc1_reg_memrm(code, 0, 0, 0, OPC_MOV_RM_REG, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	} else {
+		jit_emit_opc1_reg_memrm(code, 0, 0, 1, OPC_MOV_RM_REG8, reg,
+		    reg_base, reg_index, scale, disp, abs);
+	}
 }
 
 static
@@ -557,6 +617,13 @@ void
 jit_emit_inc_reg(jit_codebuf_t code, int w64, uint8_t regrm)
 {
 	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_INC, MODRM_REG_INC, regrm);
+}
+
+static
+void
+jit_emit_dec_reg(jit_codebuf_t code, int w64, uint8_t regrm)
+{
+	jit_emit_opc1_reg_regrm(code, w64, 0, 0, OPC_DEC, MODRM_REG_DEC, regrm);
 }
 
 static
@@ -841,41 +908,14 @@ jit_emit_ret_(jit_ctx_t ctx, jit_codebuf_t code)
 
 static
 void
-jit_emit_reloc(jit_ctx_t ctx, jit_label_t label)
+track_reloc(jit_ctx_t ctx, jit_label_t label, uintptr_t loc)
 {
 	struct x86_ctx *x86_ctx = (struct x86_ctx *)ctx->tgt_ctx;
 	struct x86_reloc *reloc;
 
 	reloc = dyn_array_new_elem(&x86_ctx->relocs);
-	reloc->loc = ctx->codebuf->emit_ptr;
+	reloc->loc = (void *)loc;
 	reloc->label = label;
-	jit_emit32(ctx->codebuf, 0xDEADC0DE);
-}
-
-static
-void
-jit_emit_jmp(jit_ctx_t ctx, jit_label_t label)
-{
-	jit_emit8(ctx->codebuf, OPC_JMP);
-	jit_emit_reloc(ctx, label);
-}
-
-static
-void
-jit_emit_jcc(jit_ctx_t ctx, int cc, jit_label_t label)
-{
-	jit_emit8(ctx->codebuf, OPC_ZEROF_PREFIX);
-	jit_emit8(ctx->codebuf, OPC_JMP_CC + cc);
-	jit_emit_reloc(ctx, label);
-}
-
-static
-void
-jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
-{
-	jit_emit8(ctx->codebuf, OPC_ZEROF_PREFIX);
-	jit_emit8(ctx->codebuf, OPC_JMP_CC + (1^cc));
-	jit_emit_reloc(ctx, label);
 }
 
 static
@@ -907,6 +947,20 @@ jit_emit_jcc_internal(jit_codebuf_t code, int cc)
 
 static
 uintptr_t
+jit_emit_jncc_internal(jit_codebuf_t code, int cc)
+{
+	uintptr_t reloc;
+
+	jit_emit8(code, OPC_ZEROF_PREFIX);
+	jit_emit8(code, OPC_JMP_CC + (1 ^cc));
+	reloc = (uintptr_t)code->emit_ptr;
+	jit_emit32(code, 0xDEADC0DE);
+
+	return reloc;
+}
+
+static
+uintptr_t
 jit_emit_jmp_rel8_internal(jit_codebuf_t code)
 {
 	uintptr_t reloc;
@@ -929,6 +983,28 @@ jit_emit_jcc_rel8_internal(jit_codebuf_t code, int cc)
 	jit_emit8(code, 0x00);
 
 	return reloc;
+}
+
+static
+void
+jit_emit_jmp(jit_ctx_t ctx, jit_label_t label)
+{
+	track_reloc(ctx, label, jit_emit_jmp_internal(ctx->codebuf));
+}
+
+static
+void
+jit_emit_jcc(jit_ctx_t ctx, int cc, jit_label_t label)
+{
+	track_reloc(ctx, label, jit_emit_jcc_internal(ctx->codebuf, cc));
+}
+
+static
+void
+jit_emit_jncc(jit_ctx_t ctx, int cc, jit_label_t label)
+{
+
+	track_reloc(ctx, label, jit_emit_jncc_internal(ctx->codebuf, cc));
 }
 
 static
@@ -1130,6 +1206,12 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 	int op_w64 = (op_dw == JITOP_DW_64);
 	jit_label_t label;
 
+	uint64_t mem_abs;
+	int32_t mem_disp;
+	int mem_scale;
+	uint8_t mem_reg_index;
+	uint8_t mem_reg_base;
+
 	switch (op) {
 	case JITOP_MOV:
 		if (dw == JITOP_DW_8 || dw == JITOP_DW_16)
@@ -1204,36 +1286,55 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 		    (int)params[2]);
 		break;
 
+	case JITOP_LDRBPSI:
+		jit_emit_common_load(ctx->codebuf, dw, params[0], params[1], params[2],
+		    params[3], 0, 0);
+		break;
 	case JITOP_LDRBPO:
-		if (dw == JITOP_DW_64 || dw == JITOP_DW_32)
-			jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_REG_RM, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
-		else if (dw == JITOP_DW_16)
-			jit_emit_opc1_reg_memrm(ctx->codebuf, 0, 1, OPC_MOVZX16, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
-		else
-			jit_emit_opc1_reg_memrm(ctx->codebuf, 0, 1, OPC_MOVZX8, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
+		jit_emit_common_load(ctx->codebuf, dw, params[0], params[1], NO_REG, 0,
+		    params[2], 0);
+		break;
+	case JITOP_LDRR:
+		jit_emit_common_load(ctx->codebuf, dw, params[0], params[1], NO_REG, 0, 0,
+		    0);
+		break;
+	case JITOP_LDRI:
+		jit_emit_common_load(ctx->codebuf, dw, params[0], NO_REG, NO_REG, 0, 0,
+		    params[1]);
 		break;
 
+	case JITOP_LDRBPSI_SEXT:
+		jit_emit_common_load_sext(ctx->codebuf, dw, params[0], params[1], params[2],
+		    params[3], 0, 0);
+		break;
 	case JITOP_LDRBPO_SEXT:
-		if (dw == JITOP_DW_64)
-			jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_REG_RM, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
-		else if (dw == JITOP_DW_32)
-			jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 0, OPC_MOVSX32, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
-		else if (dw == JITOP_DW_16)
-			jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 1, OPC_MOVSX16, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
-		else
-			jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 1, OPC_MOVSX8, params[0],
-			    params[1], NO_REG, 0, params[2], 0);
+		jit_emit_common_load_sext(ctx->codebuf, dw, params[0], params[1], NO_REG, 0,
+		    params[2], 0);
+		break;
+	case JITOP_LDRR_SEXT:
+		jit_emit_common_load_sext(ctx->codebuf, dw, params[0], params[1], NO_REG, 0,
+		    0, 0);
+		break;
+	case JITOP_LDRI_SEXT:
+		jit_emit_common_load_sext(ctx->codebuf, dw, params[0], NO_REG, NO_REG, 0, 0,
+		    params[1]);
 		break;
 
+	case JITOP_STRBPSI:
+		jit_emit_common_store(ctx->codebuf, dw, params[0], params[1], params[2],
+		    params[3], 0, 0);
+		break;
 	case JITOP_STRBPO:
-		jit_emit_opc1_reg_memrm(ctx->codebuf, w64, 0, OPC_MOV_RM_REG, params[0],
-					params[1], NO_REG, 0, params[2], 0);
+		jit_emit_common_store(ctx->codebuf, dw, params[0], params[1], NO_REG, 0,
+		    params[2], 0);
+		break;
+	case JITOP_STRR:
+		jit_emit_common_store(ctx->codebuf, dw, params[0], params[1], NO_REG, 0, 0,
+		    0);
+		break;
+	case JITOP_STRI:
+		jit_emit_common_store(ctx->codebuf, dw, params[0], NO_REG, NO_REG, 0, 0,
+		    params[1]);
 		break;
 
 	case JITOP_RET:
@@ -1467,7 +1568,7 @@ emit_prologue(jit_ctx_t ctx)
 			continue;
 
 		/* mov %reg, -(i*8)(%rbp) */
-		jit_emit_opc1_reg_memrm(&prologue_buf, 1, 0, OPC_MOV_RM_REG, reg,
+		jit_emit_opc1_reg_memrm(&prologue_buf, 1, 0, 0, OPC_MOV_RM_REG, reg,
 					REG_RBP, NO_REG, 0, -i*8, 0);
 	}
 #endif
@@ -1494,7 +1595,7 @@ emit_epilogue(jit_ctx_t ctx)
 			continue;
 
 		/* mov -(i*8)(%rbp), %saved_reg */
-		jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 0, OPC_MOV_REG_RM, saved_reg,
+		jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 0, 0, OPC_MOV_REG_RM, saved_reg,
 					REG_RBP, NO_REG, 0, -i*8, 0);
 	}
 
@@ -1662,17 +1763,17 @@ struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_LDRI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_LDRR]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_LDRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
-	[JITOP_LDRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRBPSI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	/* MOVSX for dw={8, 16, 32} */
 	[JITOP_LDRI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_LDRR_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_LDRBPO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
-	[JITOP_LDRBPSO_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_LDRBPSI_SEXT]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 
 	[JITOP_STRI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_STRR]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_STRBPO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
-	[JITOP_STRBPSO]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_STRBPSI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_BRANCH]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_BCMP]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_BCMPI]	= { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
