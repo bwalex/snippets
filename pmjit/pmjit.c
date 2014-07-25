@@ -1798,6 +1798,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 			 * and use that as output register.
 			 */
 
+			/* XXX: implement simple hinting for the non-aliased case at least */
 			reg = allocate_temp_reg(ctx, bb, tmp, current_choice, 0);
 			tparams[idx] = reg;
 			jit_regset_clear(current_choice, ts->reg);
