@@ -124,6 +124,9 @@
 
 #define OPC_LZCNT		0xBD
 
+#define OPC_XCHG_REG_RM		0x87
+#define OPC_XCHG_EAX_REG	0x90
+
 #define OPC_SHIFT_RM_CL		0xD3
 #define OPC_TEST_RM_REG		0x85
 #define OPC_TEST_RM_IMM32	0xF7
@@ -575,6 +578,30 @@ jit_emit_movsx_reg_reg(jit_codebuf_t code, int dw, uint8_t dst_reg, uint8_t src_
 	jit_emit_opc1_reg_regrm(code, 1, (dw != JITOP_DW_32), 0,
 	    (dw == JITOP_DW_8)  ? OPC_MOVSX8 :
 	    (dw == JITOP_DW_16) ? OPC_MOVSX16 : OPC_MOVSX32, dst_reg, src_reg);
+}
+
+static
+void
+jit_emit_xchg_reg_reg(jit_codebuf_t code, int w64, uint8_t reg1, uint8_t reg2)
+{
+	int reg1_ext = reg1 & 0x8;
+	int reg2_ext = reg2 & 0x8;
+
+	if (reg1 == REG_RAX) {
+		if (reg2_ext || w64)
+			jit_emit_rex(code, w64, reg2_ext, 0, 0);
+
+		jit_emit8(code, OPC_XCHG_EAX_REG + (reg2 & 0x7));
+	} else if (reg2 == REG_RAX) {
+		if (reg1_ext || w64)
+			jit_emit_rex(code, w64, reg1_ext, 0, 0);
+
+		jit_emit8(code, OPC_XCHG_EAX_REG + (reg1 & 0x7));
+	} else {
+		jit_emit_opc1_reg_regrm(code, w64, 0, 0,
+		    OPC_XCHG_REG_RM,
+		    reg1, reg2);
+	}
 }
 
 static
@@ -1227,6 +1254,10 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 			jit_emit_mov_reg_reg(ctx->codebuf, w64, params[0], params[1]);
 		break;
 
+	case JITOP_XCHG:
+		jit_emit_xchg_reg_reg(ctx->codebuf, w64, params[0], params[1]);
+		break;
+
 	case JITOP_MOVI:
 		if (params[1] == 0)
 			jit_emit_xor_reg_reg(ctx->codebuf, w64, params[0], params[0]);
@@ -1798,4 +1829,5 @@ struct jit_tgt_op_def const tgt_op_def[] = {
 	[JITOP_TSET]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_TSETI]   = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 	[JITOP_SET_LABEL] = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
+	[JITOP_XCHG]    = { .alias = "", .o_restrict = "", .i_restrict = "", .check_needed = 0 },
 };
