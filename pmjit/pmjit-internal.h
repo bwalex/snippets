@@ -138,6 +138,8 @@ struct jit_ctx
 
 	jit_regset_t	regs_ever_used;
 
+	jit_regset_t	regs_caller_saved;
+
 	int32_t		spill_stack_offset;
 
 	void		*tgt_ctx;
@@ -205,6 +207,7 @@ typedef enum {
 	JITOP_TSET,
 	JITOP_TSETI,
 	JITOP_FN_PROLOGUE,
+	JITOP_CALL,
 	JITOP_XCHG,
 	JITOP_NOP,
 	JITOP_NOP1,

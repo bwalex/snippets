@@ -285,6 +285,7 @@ const int jit_tgt_stack_base_reg = REG_RSP;
 #else
 const int jit_tgt_stack_base_reg = REG_RBP;
 #endif
+const int jit_tgt_call_ret_reg = REG_RAX;
 
 static int have_popcnt;
 static int have_lzcnt;
@@ -1699,6 +1700,15 @@ jit_tgt_ctx_init(jit_ctx_t ctx)
 #if 0
 	jit_regset_full(ctx->regs_ever_used);
 #endif
+	jit_regset_set(ctx->regs_caller_saved, REG_RAX);
+	jit_regset_set(ctx->regs_caller_saved, REG_RCX);
+	jit_regset_set(ctx->regs_caller_saved, REG_RDX);
+	jit_regset_set(ctx->regs_caller_saved, REG_RSI);
+	jit_regset_set(ctx->regs_caller_saved, REG_RDI);
+	jit_regset_set(ctx->regs_caller_saved, REG_R8);
+	jit_regset_set(ctx->regs_caller_saved, REG_R9);
+	jit_regset_set(ctx->regs_caller_saved, REG_R10);
+	jit_regset_set(ctx->regs_caller_saved, REG_R11);
 }
 
 struct cpuid_regs
