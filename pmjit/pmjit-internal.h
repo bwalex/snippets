@@ -14,6 +14,7 @@ typedef struct jit_op_def {
 
 typedef enum jit_tmp_loc {
 	JITLOC_UNALLOCATED,
+	JITLOC_CONST,
 	JITLOC_STACK,
 	JITLOC_REG
 } jit_tmp_loc_t;
@@ -49,6 +50,13 @@ typedef struct jit_tmp_out_scan {
 	int		mark;
 } *jit_tmp_out_scan_t;
 
+typedef struct jit_tmp_call_info {
+	jit_tmp_loc_t	loc;
+	int		reg;
+	int		mem_base_reg;
+	int		mem_offset;
+} *jit_tmp_call_info_t;
+
 typedef struct jit_tmp_state {
 	unsigned int	dirty  : 1;
 	unsigned int	local  : 1;
@@ -61,8 +69,12 @@ typedef struct jit_tmp_state {
 	int		mem_base_reg;
 	int		mem_offset;
 	int		id;
-	struct jit_tmp_scan	scan;
-	struct jit_tmp_out_scan	out_scan;
+
+	uint64_t	value;
+
+	struct jit_tmp_scan		scan;
+	struct jit_tmp_out_scan		out_scan;
+	struct jit_tmp_call_info	call_info;
 } *jit_tmp_state_t;
 
 
@@ -139,6 +151,7 @@ struct jit_ctx
 	jit_regset_t	regs_ever_used;
 
 	jit_regset_t	regs_caller_saved;
+	jit_regset_t	regs_call_arguments;
 
 	int32_t		spill_stack_offset;
 
@@ -248,6 +261,7 @@ typedef enum {
 
 #define jit_regset_union(r1, r2)	((r1) | (r2))
 #define jit_regset_intersection(r1, r2)	((r1) & (r2))
+#define jit_regset_invert(r1)		(~r1)
 
 #define jit_regset_set(r, reg)		((r) |=  (1UL << reg))
 #define jit_regset_clear(r, reg)	((r) &= ~(1UL << reg))

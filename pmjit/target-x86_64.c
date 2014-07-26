@@ -109,6 +109,9 @@
 #define OPC_JMP_CC		0x80
 #define OPC_JMP_CC_REL8		0x70
 
+#define OPC_CALL_REL32		0xE8
+#define OPC_CALL_RM		0xFF
+
 #define OPC_INC			0xFF
 #define OPC_DEC			0xFF
 
@@ -155,6 +158,7 @@
 #define MODRM_REG_SETCC		0x0
 #define MODRM_REG_INC		0x0
 #define MODRM_REG_DEC		0x1
+#define MODRM_REG_CALL_NEAR	0x2
 
 
 /*
@@ -285,7 +289,9 @@ const int jit_tgt_stack_base_reg = REG_RSP;
 #else
 const int jit_tgt_stack_base_reg = REG_RBP;
 #endif
-const int jit_tgt_call_ret_reg = REG_RAX;
+
+const int jit_tgt_have_xchg = 1;
+const int jit_tgt_prefer_xchg = 1;
 
 static int have_popcnt;
 static int have_lzcnt;
@@ -1113,7 +1119,7 @@ jit_tgt_reg_empty_weight(jit_ctx_t ctx, int reg)
 
 static
 int
-check_pc_rel32s(jit_ctx_t ctx, int dw, uint64_t imm)
+check_pc_rel32s(jit_ctx_t ctx, uint64_t imm)
 {
 	uint64_t approx_pc;
 	uint64_t diff;
@@ -1149,7 +1155,7 @@ jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int dw, int op_dw, int argidx, uin
 	case JITOP_LDRI:
 	case JITOP_LDRI_SEXT:
 	case JITOP_STRI:
-		return check_pc_rel32s(ctx, JITOP_DW_64, imm);
+		return check_pc_rel32s(ctx, imm);
 
 	case JITOP_LDRBPO:
 	case JITOP_LDRBPO_SEXT:
@@ -1528,6 +1534,82 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 	}
 }
 
+void
+jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params)
+{
+	jit_tmp_t tmp;
+	jit_tmp_state_t ts;
+	int i;
+
+	/*
+	 * params[0]: output temp
+	 * params[1..cnt-1]: input temps
+	 */
+	int in_temps = (cnt - 1);
+	int32_t mem_offset = 0;
+	int32_t stack_disp = (in_temps > FN_ARG_REG_CNT) ?
+	    (in_temps - FN_ARG_REG_CNT)*sizeof(uint64_t) : 0;
+
+	/* Set up output temp */
+	tmp = (jit_tmp_t)params[0];
+	ts = GET_TMP_STATE(ctx, tmp);
+	ts->call_info.loc = JITLOC_REG;
+	ts->call_info.reg = REG_RAX;
+
+	params++;
+
+	for (i = 0; i < cnt-1; i++) {
+		tmp = (jit_tmp_t)params[i];
+		ts = GET_TMP_STATE(ctx, tmp);
+
+		if (i < FN_ARG_REG_CNT) {
+			ts->call_info.loc = JITLOC_REG;
+			ts->call_info.reg = fn_arg_regs[i];
+		} else {
+			ts->call_info.loc = JITLOC_STACK;
+			ts->call_info.mem_base_reg = REG_RSP;
+			ts->call_info.mem_offset = mem_offset;
+
+			mem_offset += sizeof(uint64_t);
+		}
+	}
+
+	jit_emit_sub_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
+}
+
+void
+jit_tgt_emit_call(jit_ctx_t ctx, int cnt, uint64_t *params)
+{
+	/*
+	 * params[0]: function pointer
+	 * params[1]: output temp
+	 * params[2..cnt-1]: input temps
+	 */
+	int in_temps = (cnt - 2);
+	int32_t stack_disp = (in_temps > FN_ARG_REG_CNT) ?
+	    (in_temps - FN_ARG_REG_CNT)*sizeof(uint64_t) : 0;
+	uintptr_t fn_ptr = params[0];
+	int32_t disp32;
+
+	if (check_pc_rel32s(ctx, fn_ptr)) {
+		/* Can use RIP-relative call */
+		jit_emit8(ctx->codebuf, OPC_CALL_REL32);
+		disp32 = calculate_disp32(fn_ptr, (uintptr_t)ctx->codebuf->emit_ptr);
+		jit_emit32(ctx->codebuf, disp32);
+	} else {
+		/* Move into a scratch register first */
+		if (check_unsigned32(fn_ptr))
+			jit_emit_mov_reg_imm32(ctx->codebuf, REG_RAX, fn_ptr);
+		else
+			jit_emit_mov_reg_imm64(ctx->codebuf, REG_RAX, fn_ptr);
+
+		jit_emit_opc1_reg_regrm(ctx->codebuf, 0, 0, 0, OPC_CALL_RM,
+		    MODRM_REG_CALL_NEAR, REG_RAX);
+	}
+
+	/* Restore stack pointer */
+	jit_emit_add_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
+}
 
 void
 jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
@@ -1709,6 +1791,13 @@ jit_tgt_ctx_init(jit_ctx_t ctx)
 	jit_regset_set(ctx->regs_caller_saved, REG_R9);
 	jit_regset_set(ctx->regs_caller_saved, REG_R10);
 	jit_regset_set(ctx->regs_caller_saved, REG_R11);
+
+	jit_regset_set(ctx->regs_call_arguments, REG_RDI);
+	jit_regset_set(ctx->regs_call_arguments, REG_RSI);
+	jit_regset_set(ctx->regs_call_arguments, REG_RDX);
+	jit_regset_set(ctx->regs_call_arguments, REG_RCX);
+	jit_regset_set(ctx->regs_call_arguments, REG_R8);
+	jit_regset_set(ctx->regs_call_arguments, REG_R9);
 }
 
 struct cpuid_regs
