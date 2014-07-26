@@ -1107,7 +1107,6 @@ jit_emit_fn_prologue(jit_ctx_t ctx, const char *fmt, ...)
 {
 	va_list ap;
 	int cnt = 0;
-	int stack_idx = 0;
 	int total_cnt = 0;
 	jit_tmp_t *p_tmp;
 	jit_tmp_t tmp;
@@ -1136,6 +1135,71 @@ jit_emit_fn_prologue(jit_ctx_t ctx, const char *fmt, ...)
 	*bb->param_ptr++ = (uint64_t)total_cnt;
 
 	*bb->opc_ptr++ = JITOP(JITOP_FN_PROLOGUE, JITOP_DW_64, JITOP_DW_64);
+	++bb->opc_cnt;
+}
+
+void
+jit_emit_call(jit_ctx_t ctx, void *fn_ptr, jit_tmp_t ret_tmp, const char *fmt, ...)
+{
+	va_list ap;
+	int total_cnt = 0;
+	int dw;
+	jit_tmp_t tmp;
+	jit_tmp_state_t ts;
+	jit_bb_t bb = _cur_block(ctx);
+	int32_t i32;
+	int64_t i64;
+
+	for (total_cnt = 0; fmt[total_cnt] != '\0'; total_cnt++)
+		;
+
+	ts = GET_TMP_STATE(ctx, ret_tmp);
+	dw = ts->w64 ? JITOP_DW_64 : JITOP_DW_32;
+
+	/* + 2 to account for output tmp and fn ptr */
+	total_cnt += 2;
+
+	*bb->param_ptr++ = (uint64_t)total_cnt;
+	*bb->param_ptr++ = (uint64_t)fn_ptr;
+	*bb->param_ptr++ = (uint64_t)ret_tmp;
+
+	va_start(ap, fmt);
+	for (; *fmt != '\0'; fmt++) {
+		/* T,I => w64, t,i => w32 */
+		switch (*fmt) {
+		case 'T':
+		case 't':
+			tmp = va_arg(ap, jit_tmp_t);
+			*bb->param_ptr++ = (uint64_t)tmp;
+			break;
+
+		case 'i':
+			i32 = va_arg(ap, int32_t);
+			tmp = _jit_new_tmp(ctx, 0, 1, 0);
+			ts = GET_TMP_STATE(ctx, tmp);
+			ts->loc = JITLOC_CONST;
+			ts->value = (int64_t)i32;
+			*bb->param_ptr++ = (uint64_t)tmp;
+			break;
+
+		case 'I':
+			i64 = va_arg(ap, int64_t);
+			tmp = _jit_new_tmp(ctx, 0, 1, 0);
+			ts = GET_TMP_STATE(ctx, tmp);
+			ts->loc = JITLOC_CONST;
+			ts->value = (int64_t)i64;
+			*bb->param_ptr++ = (uint64_t)tmp;
+			break;
+
+		default:
+			assert (0);
+		}
+	}
+	va_end(ap);
+
+	*bb->param_ptr++ = (uint64_t)total_cnt;
+
+	*bb->opc_ptr++ = JITOP(JITOP_CALL, dw, JITOP_DW_64);
 	++bb->opc_cnt;
 }
 

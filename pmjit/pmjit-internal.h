@@ -70,7 +70,7 @@ typedef struct jit_tmp_state {
 	int		mem_offset;
 	int		id;
 
-	uint64_t	value;
+	int64_t	value;
 
 	struct jit_tmp_scan		scan;
 	struct jit_tmp_out_scan		out_scan;

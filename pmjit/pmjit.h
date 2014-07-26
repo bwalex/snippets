@@ -177,9 +177,7 @@ void jit_emit_fn_prologue(jit_ctx_t ctx, const char *fmt, ...);
 void jit_emit_ret(jit_ctx_t ctx, jit_tmp_t r1);
 void jit_emit_reti(jit_ctx_t ctx, uint64_t imm);
 
-/* XXX: fmt: iittti for immediate, immediate, temp, temp, temp, immediate */
-/* XXX: return value tmp? also make optional... */
-void jit_emit_call(jit_ctx_t, void *fn, const char *fmt, ...);
+void jit_emit_call(jit_ctx_t ctx, void *fn_ptr, jit_tmp_t ret_tmp, const char *fmt, ...);
 
 void jit_init(void);
 
