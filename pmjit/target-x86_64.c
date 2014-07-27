@@ -444,6 +444,12 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, int force
 	    /* or if RSP or R12 are being used as base */
 	    (!no_base && ((reg_base == REG_RSP) || (reg_base == REG_R12)));
 
+	/* When we use SIB without an index, force scale to 1 */
+	if (use_sib && no_index) {
+		scale = 1;
+		reg_index = REG_RSP;
+	}
+
 	/*
 	 * For [base + (index*scale)] addressing with RBP or R13 as base, the
 	 * displacement version has to be used no matter what - i.e. mod = 1 or 2.
