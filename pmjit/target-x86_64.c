@@ -1596,6 +1596,8 @@ jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params)
 	int32_t stack_disp = (in_temps > FN_ARG_REG_CNT) ?
 	    (in_temps - FN_ARG_REG_CNT)*sizeof(uint64_t) : 0;
 
+	stack_disp = _ALIGN_SZ(stack_disp, 32);
+
 	/* Set up output temp */
 	tmp = (jit_tmp_t)params[0];
 	ts = GET_TMP_STATE(ctx, tmp);
@@ -1639,14 +1641,13 @@ jit_tgt_emit_call(jit_ctx_t ctx, int cnt, uint64_t *params)
 	int32_t disp32;
 	uint8_t modrm;
 
+	stack_disp = _ALIGN_SZ(stack_disp, 32);
+
 	if (check_pc_rel32s(ctx, fn_ptr)) {
 		/* Can use RIP-relative call */
 		jit_emit8(ctx->codebuf, OPC_CALL_REL32);
 		disp32 = calculate_disp32(fn_ptr, (uintptr_t)ctx->codebuf->emit_ptr);
 		jit_emit32(ctx->codebuf, disp32);
-	} else if (check_unsigned32(fn_ptr)) {
-		jit_emit_opc1_reg_memrm_abs32(ctx->codebuf, 0, 0, 0, OPC_CALL_RM,
-		    MODRM_REG_CALL_NEAR, (uint32_t)fn_ptr);
 	} else {
 		/* Move into a scratch register first */
 		if (check_unsigned32(fn_ptr))
