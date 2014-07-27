@@ -374,6 +374,35 @@ jit_emit_sib(jit_codebuf_t code, int scale_factor, uint8_t index, uint8_t base)
 	jit_emit8(code, sib);
 }
 
+static
+void
+jit_emit_opc1_reg_memrm_abs32(jit_codebuf_t code, int w64, int zerof_prefix, int force_rex, uint8_t opc, uint8_t reg, uint32_t abs32)
+{
+	int reg_ext = reg & 0x8;
+	uint8_t mod;
+	uint8_t rm;
+	uint8_t modrm;
+
+	mod = MODRM_MOD_DISP0;
+
+	reg &= 0x7;
+	rm = REG_RSP;
+
+	modrm = ((mod & 0x3) << 6) | ((reg & 0x7) << 3) | (rm & 0x7);
+
+	if (w64 || reg_ext || force_rex)
+		jit_emit_rex(code, w64, reg_ext, 0, 0);
+
+	if (zerof_prefix)
+		jit_emit8(code, OPC_ZEROF_PREFIX);
+
+	jit_emit8(code, opc);
+	jit_emit8(code, modrm);
+
+	jit_emit_sib(code, 1, REG_RSP, REG_RBP);
+
+	jit_emit32(code, abs32);
+}
 
 static
 void
@@ -393,6 +422,17 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, int force
 	uint8_t mod;
 	uint8_t rm;
 	uint8_t modrm;
+
+	/*
+	 * If it's an immediate memory address, use [disp32] addressing if it
+	 * fits into disp32.
+	 */
+	if (rip_relative && check_unsigned32(abs)) {
+		jit_emit_opc1_reg_memrm_abs32(code, w64, zerof_prefix, force_rex,
+		    opc, reg, (uint32_t)abs);
+
+		return;
+	}
 
 	/* XXX: don't particularly like it, but abs is used for rip-relative */
 	if (rip_relative)
@@ -462,7 +502,7 @@ jit_emit_opc1_reg_memrm(jit_codebuf_t code, int w64, int zerof_prefix, int force
 
 	if (use_disp) {
 		if (rip_relative) {
-			disp = (int32_t)((uint64_t)(code->emit_ptr + 4) - abs);
+			disp = calculate_disp32(abs, (uintptr_t)code->emit_ptr);
 			jit_emit32(code, disp);
 		} else if (use_disp8) {
 			jit_emit8(code, disp8);
@@ -1155,7 +1195,7 @@ jit_tgt_check_imm(jit_ctx_t ctx, jit_op_t op, int dw, int op_dw, int argidx, uin
 	case JITOP_LDRI:
 	case JITOP_LDRI_SEXT:
 	case JITOP_STRI:
-		return check_pc_rel32s(ctx, imm);
+		return check_pc_rel32s(ctx, imm) || check_unsigned32(imm);
 
 	case JITOP_LDRBPO:
 	case JITOP_LDRBPO_SEXT:
@@ -1574,7 +1614,8 @@ jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params)
 		}
 	}
 
-	jit_emit_sub_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
+	if (stack_disp > 0)
+		jit_emit_sub_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
 }
 
 void
@@ -1590,12 +1631,16 @@ jit_tgt_emit_call(jit_ctx_t ctx, int cnt, uint64_t *params)
 	    (in_temps - FN_ARG_REG_CNT)*sizeof(uint64_t) : 0;
 	uintptr_t fn_ptr = params[0];
 	int32_t disp32;
+	uint8_t modrm;
 
 	if (check_pc_rel32s(ctx, fn_ptr)) {
 		/* Can use RIP-relative call */
 		jit_emit8(ctx->codebuf, OPC_CALL_REL32);
 		disp32 = calculate_disp32(fn_ptr, (uintptr_t)ctx->codebuf->emit_ptr);
 		jit_emit32(ctx->codebuf, disp32);
+	} else if (check_unsigned32(fn_ptr)) {
+		jit_emit_opc1_reg_memrm_abs32(ctx->codebuf, 0, 0, 0, OPC_CALL_RM,
+		    MODRM_REG_CALL_NEAR, (uint32_t)fn_ptr);
 	} else {
 		/* Move into a scratch register first */
 		if (check_unsigned32(fn_ptr))
@@ -1608,7 +1653,8 @@ jit_tgt_emit_call(jit_ctx_t ctx, int cnt, uint64_t *params)
 	}
 
 	/* Restore stack pointer */
-	jit_emit_add_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
+	if (stack_disp > 0)
+		jit_emit_add_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
 }
 
 void

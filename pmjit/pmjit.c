@@ -1171,6 +1171,9 @@ jit_emit_call(jit_ctx_t ctx, void *fn_ptr, jit_tmp_t ret_tmp, const char *fmt, .
 		case 't':
 			tmp = va_arg(ap, jit_tmp_t);
 			*bb->param_ptr++ = (uint64_t)tmp;
+
+			tmp_add_use(ctx, bb, tmp, bb->opc_cnt);
+
 			break;
 
 		case 'i':
@@ -1183,6 +1186,8 @@ jit_emit_call(jit_ctx_t ctx, void *fn_ptr, jit_tmp_t ret_tmp, const char *fmt, .
 			break;
 
 		case 'I':
+		case 'P':
+		case 'p':
 			i64 = va_arg(ap, int64_t);
 			tmp = _jit_new_tmp(ctx, 0, 1, 0);
 			ts = GET_TMP_STATE(ctx, tmp);
@@ -1295,6 +1300,31 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 			}
 			++param_idx;
 			printf(") =\n");
+			break;
+
+		case JITOP_CALL:
+			arg_cnt = bb->params[param_idx]-2;
+			++param_idx;
+			tmp = (jit_tmp_t)bb->params[param_idx+1];
+			ts = GET_TMP_STATE(ctx, tmp);
+			printf("\tcall\t%p\t%c%d", (void *)bb->params[param_idx], JIT_TMP_IS_LOCAL(tmp) ? 'l':'t', ts->id);
+			param_idx += 2;
+			for (; arg_cnt > 0; arg_cnt--) {
+				printf(", ");
+				tmp = (jit_tmp_t)bb->params[param_idx];
+				ts = GET_TMP_STATE(ctx, tmp);
+				if (ts->loc == JITLOC_CONST) {
+					if (ts->w64)
+						printf("%"PRId64, ts->value);
+					else
+						printf("%d", (int32_t)ts->value);
+				} else {
+					printf("%c%d", JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
+				}
+				++param_idx;
+			}
+			++param_idx;
+			printf("\n");
 			break;
 
 		case JITOP_SET_LABEL:
@@ -2181,6 +2211,20 @@ bb_remove_dead(jit_ctx_t ctx, jit_bb_t bb) {
 
 		case JITOP_NOP:
 			dead = 0;
+			break;
+
+		case JITOP_CALL:
+			/*
+			 * [0]: cnt
+			 * [1]: fn_ptr
+			 * [2]: output temp
+			 * [3..cnt-3]: input temps
+			 */
+			for (i = 3; i < cnt-1; i++) {
+				tmp = bb->params[opparam_idx+i];
+				ts = GET_TMP_STATE(ctx, tmp);
+				ts->out_scan.mark = 1;
+			}
 			break;
 
 		default:
