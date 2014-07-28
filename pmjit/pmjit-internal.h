@@ -1,5 +1,6 @@
 #ifndef _PMJIT_INTERNAL_H_
 #define _PMJIT_INTERNAL_H_
+#include "bsd-queue.h"
 #include "dyn_array.h"
 
 
@@ -25,8 +26,7 @@ typedef struct jit_tmp_use {
 	int			generation;
 	int			bb_id;
 
-	struct jit_tmp_use	*prev;
-	struct jit_tmp_use	*next;
+	TAILQ_ENTRY(jit_tmp_use)	link;
 } *jit_tmp_use_t;
 
 
@@ -36,8 +36,7 @@ typedef struct jit_tmp_scan {
 	 * as a destination of an operation.
 	 */
 	int		generation;
-	jit_tmp_use_t	use_head;
-	jit_tmp_use_t	use_tail;
+	TAILQ_HEAD(, jit_tmp_use)	use_list;
 
 	/* Use metrics */
 	int		use_count;

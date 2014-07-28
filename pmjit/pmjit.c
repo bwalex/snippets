@@ -112,7 +112,9 @@ tmp_state_ctor(void *priv, void *elem)
 {
 	jit_tmp_state_t ts = (jit_tmp_state_t)elem;
 
-	ts->scan.use_head = ts->scan.use_tail = NULL;
+	memset(ts, 0, sizeof(*ts));
+
+	TAILQ_INIT(&ts->scan.use_list);
 }
 
 static
@@ -183,7 +185,7 @@ dump_regs(jit_ctx_t ctx)
 			ts = GET_TMP_STATE(ctx, tmp);
 
 			printf("  %.2d -> %c%d", reg, JIT_TMP_IS_LOCAL(tmp)?'l':'t', ts->id);
-			for (use = ts->scan.use_head; use != NULL; use = use->next) {
+			TAILQ_FOREACH(use, &ts->scan.use_list, link) {
 				printf(" %d{%d}", use->use_idx, use->generation);
 			}
 
@@ -267,14 +269,7 @@ tmp_add_use(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx)
 	use->generation = ts->scan.generation;
 	use->bb_id = bb->id;
 
-	if (ts->scan.use_head == NULL) {
-		ts->scan.use_head = ts->scan.use_tail = use;
-	} else {
-		use->prev = ts->scan.use_tail;
-		if (use->prev != NULL)
-			use->prev->next = use;
-		ts->scan.use_tail = use;
-	}
+	TAILQ_INSERT_TAIL(&ts->scan.use_list, use, link);
 }
 
 static
@@ -284,19 +279,11 @@ tmp_del_use(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx)
 	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
 	jit_tmp_use_t use;
 
-	for (use = ts->scan.use_head; use != NULL; use = use->next) {
+	TAILQ_FOREACH(use, &ts->scan.use_list, link) {
 		if (use->use_idx != use_idx || use->bb_id != bb->id)
 			continue;
 
-		if (use->prev == NULL)
-			ts->scan.use_head = use->next;
-		else
-			use->prev->next = use->next;
-
-		if (use->next == NULL)
-			ts->scan.use_tail = use->prev;
-		else
-			use->next->prev = use->prev;
+		TAILQ_REMOVE(&ts->scan.use_list, use, link);
 
 		break;
 	}
@@ -308,7 +295,7 @@ tmp_is_dead(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp)
 {
 	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
 
-	return (ts->scan.use_head == NULL);
+	return TAILQ_EMPTY(&ts->scan.use_list);
 }
 
 static
@@ -316,12 +303,14 @@ int
 tmp_is_relatively_dead(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int rel_generation)
 {
 	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_use_t use;
 
 	if (tmp_is_dead(ctx, bb, tmp))
 		return 1;
 
-	return ((ts->scan.use_head->generation > rel_generation) ||
-		(ts->scan.use_head->bb_id > bb->id));
+	use = TAILQ_FIRST(&ts->scan.use_list);
+	return ((use->generation > rel_generation) ||
+		(use->bb_id > bb->id));
 }
 
 static
@@ -331,17 +320,11 @@ tmp_pop_use(jit_ctx_t ctx, jit_tmp_t tmp)
 	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
 	jit_tmp_use_t use;
 
-	assert (ts->scan.use_head != NULL);
+	assert (!TAILQ_EMPTY(&ts->scan.use_list));
 
-	use = ts->scan.use_head;
+	use = TAILQ_FIRST(&ts->scan.use_list);
 
-	if (ts->scan.use_tail == use) {
-		ts->scan.use_head = NULL;
-		ts->scan.use_tail = NULL;
-	} else {
-		use->next->prev = NULL;
-		ts->scan.use_head = use->next;
-	}
+	TAILQ_REMOVE(&ts->scan.use_list, use, link);
 
 	free(use);
 }
@@ -362,8 +345,6 @@ _jit_new_tmp(jit_ctx_t ctx, int local, int constant, int w64)
 		tmp_state = dyn_array_new_elem2(&ctx->bb_tmps, &idx);
 		tmp = idx;
 	}
-
-	memset(tmp_state, 0, sizeof(struct jit_tmp_state));
 
 	tmp_state->local = local;
 	tmp_state->constant = constant;
