@@ -1412,7 +1412,6 @@ save_temp(jit_ctx_t ctx, jit_tmp_t tmp)
 
 	/* If it doesn't have any spill location allocated, allocate one */
 	if (!ts->mem_allocated) {
-		/* XXX: += ? or -=? */
 		ts->mem_allocated = 1;
 		ts->mem_offset = ctx->spill_stack_offset;
 		ts->mem_base_reg = jit_tgt_stack_base_reg;
