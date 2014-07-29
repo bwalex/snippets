@@ -775,7 +775,7 @@ jit_emit_mov_reg_imm32(jit_codebuf_t code, uint8_t dst_reg, uint32_t imm)
 	dst_reg &= 0x7;
 
 	if (reg_ext)
-		jit_emit_rex(code, 0, reg_ext, 0, 0);
+		jit_emit_rex(code, 0, 0, 0, reg_ext);
 
 	jit_emit8(code, OPC_MOV_REG_IMM32 + dst_reg);
 	jit_emit32(code, imm);
@@ -797,7 +797,7 @@ jit_emit_mov_reg_imm64(jit_codebuf_t code, uint8_t dst_reg, uint64_t imm)
 
 	dst_reg &= 0x7;
 
-	jit_emit_rex(code, 1, reg_ext, 0, 0);
+	jit_emit_rex(code, 1, 0, 0, reg_ext);
 	jit_emit8(code, OPC_MOV_REG_IMM32 + dst_reg);
 	jit_emit64(code, imm);
 }
@@ -811,7 +811,7 @@ jit_emit_push_reg(jit_codebuf_t code, uint8_t reg)
 	reg &= 0x7;
 
 	if (reg_ext)
-		jit_emit_rex(code, 1, reg_ext, 0, 0);
+		jit_emit_rex(code, 1, 0, 0, reg_ext);
 
 	jit_emit8(code, OPC_PUSH_REG + reg);
 }
@@ -825,7 +825,7 @@ jit_emit_pop_reg(jit_codebuf_t code, uint8_t reg)
 	reg &= 0x7;
 
 	if (reg_ext)
-		jit_emit_rex(code, 1, reg_ext, 0, 0);
+		jit_emit_rex(code, 1, 0, 0, reg_ext);
 
 	jit_emit8(code, OPC_POP_REG + reg);
 }
@@ -839,7 +839,7 @@ jit_emit_bswap_reg(jit_codebuf_t code, int w64, uint8_t reg)
 	reg &= 0x7;
 
 	if (reg_ext || w64)
-		jit_emit_rex(code, w64, reg_ext, 0, 0);
+		jit_emit_rex(code, w64, 0, 0, reg_ext);
 
 	jit_emit8(code, OPC_ZEROF_PREFIX);
 	jit_emit8(code, OPC_BSWAP_REG + reg);
