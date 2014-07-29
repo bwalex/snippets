@@ -1755,7 +1755,7 @@ jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params)
 
 #ifdef JIT_FPO
 #else
-	ctx->spill_stack_offset = -((int)sizeof(uint64_t)*CALLEE_SAVED_REG_CNT);
+	ctx->spill_stack_offset = -((int)sizeof(uint64_t)*(CALLEE_SAVED_REG_CNT+1));
 #endif
 
 	ctx->codebuf->emit_ptr = ctx->codebuf->code_ptr =
