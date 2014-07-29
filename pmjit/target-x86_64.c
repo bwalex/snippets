@@ -128,7 +128,9 @@
 #define OPC_CMOV_CC		0x40
 
 #define OPC_PUSH_REG		0x50
+#define OPC_PUSH_RM		0xFF
 #define OPC_POP_REG		0x58
+#define OPC_POP_RM		0x8F
 #define OPC_ENTER		0xC8
 #define OPC_LEAVE		0xC9
 
@@ -166,6 +168,8 @@
 #define MODRM_REG_INC		0x0
 #define MODRM_REG_DEC		0x1
 #define MODRM_REG_CALL_NEAR	0x2
+#define MODRM_REG_PUSH		0x6
+#define MODRM_REG_POP		0x0
 
 
 /*
@@ -277,18 +281,23 @@ static uint8_t dw_init_insns[] = {
 #endif
 
 static const int reg_empty_weight[] = {
-	[REG_RAX]	= 1,
+	/*
+	 * Weights:
+	 *   0: callee-saved
+	 *   1: special-purpose for some instructions
+	 *   2: all others
+	 */
+	[REG_RAX]	= 2,
 	[REG_RCX]	= 1,
-	[REG_RDX]	= 1,
+	[REG_RDX]	= 2,
 	[REG_RBX]	= 0,
-	[REG_RSP]	= 1,
 	[REG_RBP]	= 0,
-	[REG_RSI]	= 1,
-	[REG_RDI]	= 1,
-	[REG_R8]	= 1,
-	[REG_R9]	= 1,
-	[REG_R10]	= 1,
-	[REG_R11]	= 1,
+	[REG_RSI]	= 2,
+	[REG_RDI]	= 2,
+	[REG_R8]	= 2,
+	[REG_R9]	= 2,
+	[REG_R10]	= 2,
+	[REG_R11]	= 2,
 	[REG_R12]	= 0,
 	[REG_R13]	= 0,
 	[REG_R14]	= 0,
