@@ -1728,15 +1728,14 @@ emit_prologue(jit_ctx_t ctx)
 				  dyn_array_size(&ctx->bb_tmps)), 16);
 	jit_emit_sub_reg_imm32(&prologue_buf, 1, REG_RSP, frame_size);
 
-	/* ^^^ equivalent to enter (but enter seems to take more cycles) */
 	for (i = 0; i < CALLEE_SAVED_REG_CNT; i++) {
 		reg = callee_saved_regs[i];
 		if (!jit_regset_test(ctx->regs_ever_used, reg))
 			continue;
 
-		/* mov %reg, -(i*8)(%rbp) */
+		/* mov %reg, -((i+1)*8)(%rbp) */
 		jit_emit_opc1_reg_memrm(&prologue_buf, 1, 0, 0, OPC_MOV_RM_REG, reg,
-					REG_RBP, NO_REG, 0, -i*8, 0);
+					REG_RBP, NO_REG, 0, -(i+1)*8, 0);
 	}
 #endif
 
@@ -1763,7 +1762,7 @@ emit_epilogue(jit_ctx_t ctx)
 
 		/* mov -(i*8)(%rbp), %saved_reg */
 		jit_emit_opc1_reg_memrm(ctx->codebuf, 1, 0, 0, OPC_MOV_REG_RM, saved_reg,
-					REG_RBP, NO_REG, 0, -i*8, 0);
+					REG_RBP, NO_REG, 0, -(i+1)*8, 0);
 	}
 
 	jit_emit8(ctx->codebuf, OPC_LEAVE);
