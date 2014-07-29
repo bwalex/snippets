@@ -1,7 +1,8 @@
 CFLAGS= -O0 -g3
+LIBS=	-ldwarf
 LDFLAGS=	-O0 -g3
 
-OBJS=	test.o pmjit.o dyn_array.o
+OBJS=	test.o pmjit.o dyn_array.o pmjit-gdb.o
 X86OBJS=target-x86_64.o
 
 WARNFLAGS=-Wsystem-headers -Wall -W \
@@ -15,6 +16,7 @@ WARNFLAGS=-Wsystem-headers -Wall -W \
 CFLAGS+= $(WARNFLAGS)
 
 test:	$(OBJS) $(X86OBJS)
+	$(CC) $(LDFLAGS) $^ $(LIBS) -o $@
 
 clean:
 	rm -f $(OBJS)

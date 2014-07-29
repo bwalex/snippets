@@ -303,6 +303,9 @@ typedef enum {
 	    ((align_sz) + (sz) - ((sz) % (align_sz))) : \
 	     (sz))
 
+#ifndef __DECONST
+#define __DECONST(type, var) ((type)(uintptr_t)(const void *)(var))
+#endif
 
 extern struct jit_op_def const op_def[];
 

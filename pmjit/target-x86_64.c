@@ -26,6 +26,8 @@
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
 */
+#define DWARF_DEBUG_ENABLE 1
+
 #include <sys/mman.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -36,6 +38,11 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <inttypes.h>
+#ifdef DWARF_DEBUG_ENABLE
+#include <libdwarf.h>
+#include <dwarf.h>
+#include "pmjit-gdb.h"
+#endif
 #include "pmjit.h"
 #include "pmjit-internal.h"
 #include "pmjit-tgt.h"
@@ -176,6 +183,10 @@ struct x86_reloc
 typedef struct x86_ctx {
 	struct dyn_array epilogues;
 	struct dyn_array relocs;
+
+#ifdef DWARF_DEBUG_ENABLE
+	Dwarf_P_Debug	dw;
+#endif
 } *x86_ctx_t;
 
 typedef enum {
@@ -215,6 +226,55 @@ static const char *reg_to_name[] = {
 	[REG_R14]	= "r14",
 	[REG_R15]	= "r15"
 };
+
+#ifdef DWARF_DEBUG_ENABLE
+/* From System V ABI for AMD64 */
+#define DW_REG_RAX	0
+#define DW_REG_RDX	1
+#define DW_REG_RCX	2
+#define DW_REG_RBX	3
+#define DW_REG_RSI	4
+#define DW_REG_RDI	5
+#define DW_REG_FP	6
+#define DW_REG_SP	7
+#define DW_REG_R8	8
+#define DW_REG_R9	9
+#define DW_REG_R10	10
+#define DW_REG_R11	11
+#define DW_REG_R12	12
+#define DW_REG_R13	13
+#define DW_REG_R14	14
+#define DW_REG_R15	15
+#define DW_REG_RA	16
+
+
+static const int reg_to_dwarf_reg[] = {
+	[REG_RAX]	= DW_REG_RAX,
+	[REG_RDX]	= DW_REG_RDX,
+	[REG_RCX]	= DW_REG_RCX,
+	[REG_RBX]	= DW_REG_RBX,
+	[REG_RSP]	= DW_REG_SP,
+	[REG_RBP]	= DW_REG_FP,
+	[REG_RSI]	= DW_REG_RSI,
+	[REG_RDI]	= DW_REG_RDI,
+	[REG_R8]	= DW_REG_R9,
+	[REG_R9]	= DW_REG_R8,
+	[REG_R10]	= DW_REG_R10,
+	[REG_R11]	= DW_REG_R11,
+	[REG_R12]	= DW_REG_R12,
+	[REG_R13]	= DW_REG_R13,
+	[REG_R14]	= DW_REG_R14,
+	[REG_R15]	= DW_REG_R15
+};
+
+#ifdef JIT_FPO
+#else
+static uint8_t dw_init_insns[] = {
+	DW_CFA_def_cfa_sf, DW_REG_SP, 1,
+	DW_CFA_offset | DW_REG_RA, 1
+};
+#endif
+#endif
 
 static const int reg_empty_weight[] = {
 	[REG_RAX]	= 1,
@@ -1711,6 +1771,27 @@ emit_prologue(jit_ctx_t ctx)
 	int32_t frame_size;
 	int i, reg;
 	int r;
+	uint8_t *prev_emit_ptr;
+	x86_ctx_t x86_ctx = (x86_ctx_t)ctx->tgt_ctx;
+
+#ifdef DWARF_DEBUG_ENABLE
+	Dwarf_Error dw_err = 0;
+	Dwarf_Unsigned cie;
+	Dwarf_P_Fde fde;
+	Dwarf_P_Die die0, die1, die2;
+
+	cie = dwarf_add_frame_cie(x86_ctx->dw, __DECONST(char *, ""),
+	    /* code alignment factor */1,
+	    /* data alignment factor */-8,
+	    DW_REG_RA,
+	    dw_init_insns,
+	    sizeof(dw_init_insns),
+	    &dw_err);
+	assert (!dw_err);
+
+	fde = dwarf_new_fde(x86_ctx->dw, &dw_err);
+	assert (!dw_err);
+#endif
 
 #ifdef JIT_FPO
 #else
@@ -1718,15 +1799,53 @@ emit_prologue(jit_ctx_t ctx)
 	assert (r == 0);
 
 	/* push %rbp */
+	prev_emit_ptr = prologue_buf.emit_ptr;
 	jit_emit_push_reg(&prologue_buf, REG_RBP);
+#ifdef DWARF_DEBUG_ENABLE
+	dwarf_add_fde_inst(fde,
+	    DW_CFA_advance_loc, (prologue_buf.emit_ptr - prev_emit_ptr), 0,
+	    &dw_err);
+	assert (!dw_err);
+
+	dwarf_add_fde_inst(fde,
+	    DW_CFA_def_cfa_offset_sf, -2, 0,
+	    &dw_err);
+	assert (!dw_err);
+
+	dwarf_add_fde_inst(fde,
+	    DW_CFA_offset, DW_REG_FP, 2,
+	    &dw_err);
+	assert (!dw_err);
+#endif
+
 	/* mov  %rsp, %rbp */
+	prev_emit_ptr = prologue_buf.emit_ptr;
 	jit_emit_mov_reg_reg(&prologue_buf, 1, REG_RBP, REG_RSP);
+#ifdef DWARF_DEBUG_ENABLE
+	dwarf_add_fde_inst(fde,
+	    DW_CFA_advance_loc, (prologue_buf.emit_ptr - prev_emit_ptr), 0,
+	    &dw_err);
+	assert (!dw_err);
+
+	dwarf_add_fde_inst(fde,
+	    DW_CFA_def_cfa_register, DW_REG_FP, 0,
+	    &dw_err);
+	assert (!dw_err);
+#endif
 
 	/* sub  $frame_size, %rsp */
 	frame_size = _ALIGN_SZ(8*(CALLEE_SAVED_REG_CNT +
 				  dyn_array_size(&ctx->local_tmps) +
 				  dyn_array_size(&ctx->bb_tmps)), 16);
+
+	prev_emit_ptr = prologue_buf.emit_ptr;
 	jit_emit_sub_reg_imm32(&prologue_buf, 1, REG_RSP, frame_size);
+#ifdef DWARF_DEBUG_ENABLE
+	dwarf_add_fde_inst(fde,
+	    DW_CFA_advance_loc, (prologue_buf.emit_ptr - prev_emit_ptr), 0,
+	    &dw_err);
+	assert (!dw_err);
+#endif
 
 	for (i = 0; i < CALLEE_SAVED_REG_CNT; i++) {
 		reg = callee_saved_regs[i];
@@ -1734,8 +1853,21 @@ emit_prologue(jit_ctx_t ctx)
 			continue;
 
 		/* mov %reg, -((i+1)*8)(%rbp) */
+		prev_emit_ptr = prologue_buf.emit_ptr;
 		jit_emit_opc1_reg_memrm(&prologue_buf, 1, 0, 0, OPC_MOV_RM_REG, reg,
 					REG_RBP, NO_REG, 0, -(i+1)*8, 0);
+#ifdef DWARF_DEBUG_ENABLE
+		dwarf_add_fde_inst(fde,
+		    DW_CFA_advance_loc, (prologue_buf.emit_ptr - prev_emit_ptr), 0,
+		    &dw_err);
+		assert (!dw_err);
+
+		dwarf_add_fde_inst(fde,
+		    DW_CFA_offset, reg_to_dwarf_reg[reg], (3+i),
+		    &dw_err);
+		assert (!dw_err);
+#endif
+
 	}
 #endif
 
@@ -1747,6 +1879,43 @@ emit_prologue(jit_ctx_t ctx)
 	ctx->codebuf->code_sz += prologue_buf.code_sz;
 
 	memcpy(ctx->codebuf->code_ptr, prologue_buf.code_ptr, prologue_buf.code_sz);
+
+#ifdef DWARF_DEBUG_ENABLE
+	dwarf_add_frame_fde(x86_ctx->dw,
+	    fde,
+	    (Dwarf_P_Die)0,
+	    cie,
+	    /* virt_addr_of_described_code */0,
+	    /* length_of_code */0,
+	    /* symbol_index */0,
+	    &dw_err);
+	assert (!dw_err);
+
+	die0 = dwarf_new_die(x86_ctx->dw, DW_TAG_compile_unit, NULL, NULL, NULL,
+	    NULL, &dw_err);
+	assert (die0 != NULL);
+
+	dwarf_add_AT_targ_address(x86_ctx->dw, die0, DW_AT_low_pc,
+	    (Dwarf_Unsigned)ctx->codebuf->code_ptr, 0, &dw_err);
+	dwarf_add_AT_targ_address(x86_ctx->dw, die0, DW_AT_high_pc,
+	    (Dwarf_Unsigned)(ctx->codebuf->code_ptr + ctx->codebuf->code_sz), 0, &dw_err);
+
+
+	die1 = dwarf_new_die(x86_ctx->dw, DW_TAG_subprogram, die0, NULL, NULL,
+	    NULL, &dw_err);
+	assert (die1 != NULL);
+
+	dwarf_add_AT_name(die1, __DECONST(char *, "jitted_func"), &dw_err);
+	dwarf_add_AT_targ_address(x86_ctx->dw, die1, DW_AT_low_pc,
+	    (Dwarf_Unsigned)ctx->codebuf->code_ptr, 0, &dw_err);
+	dwarf_add_AT_targ_address(x86_ctx->dw, die1, DW_AT_high_pc,
+	    (Dwarf_Unsigned)(ctx->codebuf->code_ptr + ctx->codebuf->code_sz), 0, &dw_err);
+
+
+	if (dwarf_add_die_to_debug(x86_ctx->dw, die0, &dw_err) != DW_DLV_OK) {
+		assert (0);
+	}
+#endif
 }
 
 static
@@ -1796,16 +1965,57 @@ jit_tgt_ctx_finish_emit(jit_ctx_t ctx)
 		disp = calculate_disp32((uintptr_t)label->tgt_info, (uintptr_t)reloc->loc);
 		jit_emit32_at(reloc->loc, (uint32_t)disp);
 	}
+
+#ifdef DWARF_DEBUG_ENABLE
+	jit_gdb_info(ctx->codebuf->code_ptr, ctx->codebuf->code_sz, x86_ctx->dw);
+#endif
 }
+
+#ifdef DWARF_DEBUG_ENABLE
+static
+int
+create_section_cb(char *name, int size, Dwarf_Unsigned type, Dwarf_Unsigned flags,
+    Dwarf_Unsigned link, Dwarf_Unsigned info, Dwarf_Unsigned *sect_name_index,
+    void *user_data, int *error)
+{
+	if (strcmp(name, ".debug_frame") == 0)
+		return ELF_SECTION_debug_frame;
+	else if (strcmp(name, ".debug_info") == 0)
+		return ELF_SECTION_debug_info;
+	else if (strcmp(name, ".debug_abbrev") == 0)
+		return ELF_SECTION_debug_abbrev;
+#if 0
+	else if (strcmp(name, ".debug_line") == 0)
+		return ELF_SECTION_debug_line;
+#endif
+	else
+		return 0;
+}
+#endif
 
 void
 jit_tgt_ctx_init(jit_ctx_t ctx)
 {
 	x86_ctx_t x86_ctx;
+#ifdef DWARF_DEBUG_ENABLE
+	Dwarf_Error dw_err = 0;
+#endif
 
 	x86_ctx = malloc(sizeof(*x86_ctx));
 	assert (x86_ctx != NULL);
 	memset(x86_ctx, 0, sizeof(*x86_ctx));
+
+#ifdef DWARF_DEBUG_ENABLE
+	x86_ctx->dw = dwarf_producer_init_c(
+	    DW_DLC_WRITE | DW_DLC_SIZE_64,
+	    create_section_cb,
+	    (Dwarf_Handler)0,
+	    (Dwarf_Ptr)0,
+	    (void *)0,
+	    &dw_err);
+
+	assert (!dw_err);
+#endif
 
 	dyn_array_init(&x86_ctx->epilogues, sizeof(void *), 4, NULL, NULL, NULL);
 	dyn_array_init(&x86_ctx->relocs, sizeof(struct x86_reloc), 8, NULL, NULL,
