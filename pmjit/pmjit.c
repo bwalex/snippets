@@ -115,6 +115,7 @@ tmp_state_ctor(void *priv, void *elem)
 	memset(ts, 0, sizeof(*ts));
 
 	TAILQ_INIT(&ts->scan.use_list);
+	TAILQ_INIT(&ts->scan.hint_list);
 }
 
 static
@@ -290,6 +291,121 @@ tmp_del_use(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx)
 }
 
 static
+void
+tmp_pop_use(jit_ctx_t ctx, jit_tmp_t tmp)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_use_t use;
+
+	assert (!TAILQ_EMPTY(&ts->scan.use_list));
+
+	use = TAILQ_FIRST(&ts->scan.use_list);
+
+	TAILQ_REMOVE(&ts->scan.use_list, use, link);
+
+	free(use);
+}
+
+static
+void
+tmp_add_hint(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx, int reg)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_hint_t hint;
+
+	hint = malloc(sizeof(struct jit_tmp_hint));
+	assert (hint != NULL);
+
+	memset(hint, 0, sizeof(struct jit_tmp_hint));
+	hint->use_idx = use_idx;
+	hint->bb_id = bb->id;
+	hint->reg = reg;
+
+	TAILQ_INSERT_HEAD(&ts->scan.hint_list, hint, link);
+}
+
+static
+void
+tmp_del_hint(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int use_idx)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_hint_t hint;
+
+	TAILQ_FOREACH(hint, &ts->scan.hint_list, link) {
+		if (hint->use_idx != use_idx || hint->bb_id != bb->id)
+			continue;
+
+		TAILQ_REMOVE(&ts->scan.hint_list, hint, link);
+
+		break;
+	}
+}
+
+static
+void
+tmp_pop_hint(jit_ctx_t ctx, jit_tmp_t tmp)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_hint_t hint;
+
+	assert (!TAILQ_EMPTY(&ts->scan.hint_list));
+
+	hint = TAILQ_FIRST(&ts->scan.hint_list);
+
+	TAILQ_REMOVE(&ts->scan.hint_list, hint, link);
+
+	free(hint);
+}
+
+static
+int
+tmp_get_hint(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int idx, int *regp)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_hint_t hint;
+
+	if (TAILQ_EMPTY(&ts->scan.hint_list))
+		return 0;
+
+	TAILQ_FOREACH(hint, &ts->scan.hint_list, link) {
+		printf("hint->bb_id=%d, hint->use_idx=%d\n", hint->bb_id, hint->use_idx);
+		if (hint->bb_id != bb->id)
+			continue;
+		if (hint->use_idx < idx)
+			continue;
+
+		*regp = hint->reg;
+		return 1;
+	}
+
+	return 0;
+}
+
+static
+int
+tmp_get_hint2(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int idx, jit_tmp_hint_t *hintp)
+{
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+	jit_tmp_hint_t hint;
+
+	if (TAILQ_EMPTY(&ts->scan.hint_list))
+		return 0;
+
+	TAILQ_FOREACH(hint, &ts->scan.hint_list, link) {
+		printf("hint->bb_id=%d, hint->use_idx=%d\n", hint->bb_id, hint->use_idx);
+		if (hint->bb_id != bb->id)
+			continue;
+		if (hint->use_idx < idx)
+			continue;
+
+		*hintp = hint;
+		return 1;
+	}
+
+	return 0;
+}
+
+static
 int
 tmp_is_dead(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp)
 {
@@ -311,22 +427,6 @@ tmp_is_relatively_dead(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp, int rel_genera
 	use = TAILQ_FIRST(&ts->scan.use_list);
 	return ((use->generation > rel_generation) ||
 		(use->bb_id > bb->id));
-}
-
-static
-void
-tmp_pop_use(jit_ctx_t ctx, jit_tmp_t tmp)
-{
-	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
-	jit_tmp_use_t use;
-
-	assert (!TAILQ_EMPTY(&ts->scan.use_list));
-
-	use = TAILQ_FIRST(&ts->scan.use_list);
-
-	TAILQ_REMOVE(&ts->scan.use_list, use, link);
-
-	free(use);
 }
 
 static
@@ -1546,7 +1646,28 @@ _tmp_weight(jit_ctx_t ctx, jit_tmp_t tmp)
 
 static
 int
-allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t choice_regset, int flags)
+compare_hint_weights(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp1, jit_tmp_t tmp2, int opc_idx)
+{
+	jit_tmp_state_t ts1 = GET_TMP_STATE(ctx, tmp1);
+	jit_tmp_state_t ts2 = GET_TMP_STATE(ctx, tmp2);
+	jit_tmp_hint_t hint1, hint2;
+	int r1, r2;
+
+	r1 = tmp_get_hint2(ctx, bb, tmp1, opc_idx, &hint1);
+	r2 = tmp_get_hint2(ctx, bb, tmp2, opc_idx, &hint2);
+
+	if (r1 && !r2)
+		return 1;
+	else if (r2 && !r1)
+		return -1;
+
+	return (hint2->use_idx - hint1->use_idx);
+}
+
+
+static
+int
+allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t choice_regset, int flags, int opc_idx)
 {
 
 	int reg;
@@ -1563,6 +1684,25 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 	printf("allocating reg for temp %c%d\n", ts_alloc->local?'l':'t', ts_alloc->id);
 	assert (!jit_regset_is_empty(choice_regset));
 
+	if ((!(flags & CAN_FAIL)) && tmp_get_hint(ctx, bb, tmp_alloc, opc_idx, &reg)) {
+		if (jit_regset_test(choice_regset, reg)) {
+			found_empty = !jit_regset_test(ctx->regs_used, reg);
+			if (!found_empty) {
+				tmp = ctx->reg_to_tmp[reg];
+				ts = GET_TMP_STATE(ctx, tmp);
+				if (compare_hint_weights(ctx, bb, tmp_alloc, tmp, opc_idx) > 0) {
+					printf("@@ taking hint (reg was used!)\n");
+					goto done;
+				} else {
+					printf("@@ ignoring hint...\n");
+				}
+			} else {
+				printf("@@ taking hint (reg was unused)\n");
+				goto done;
+			}
+		}
+	}
+
 	for (reg = 0; reg < 64; reg++) {
 		/* If the register is not a valid choice, don't even try */
 		if (!jit_regset_test(choice_regset, reg))
@@ -1574,6 +1714,12 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 		if (!jit_regset_test(ctx->regs_used, reg)) {
 			found_empty = 1;
 			weight = jit_tgt_reg_empty_weight(ctx, reg);
+			/*
+			 * If the register is not used for hinting,
+			 * increase the weight even more.
+			 */
+			if (!jit_regset_test(bb->regs_hinted, reg))
+				weight += 1;
 			if (weight > max_empty_weight) {
 				max_empty_weight = weight;
 				max_empty_weight_reg = reg;
@@ -1597,11 +1743,14 @@ allocate_temp_reg(jit_ctx_t ctx, jit_bb_t bb, jit_tmp_t tmp_alloc, jit_regset_t 
 	}
 #endif
 
-	printf("  -> found_empty? %d\n", found_empty);
-	if (found_empty) {
+	if (found_empty)
 		reg = max_empty_weight_reg;
-	} else {
+	else
 		reg = max_weight_reg;
+
+done:
+	printf("  -> found_empty? %d\n", found_empty);
+	if (!found_empty) {
 		tmp = ctx->reg_to_tmp[reg];
 		ts = GET_TMP_STATE(ctx, tmp);
 		printf("  -> picking and spilling non-empty: reg=%d, tmp=%c%d\n", reg, ts->local?'l':'t', ts->id);
@@ -1664,7 +1813,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		 * count including the output register and the
 		 * function pointer.
 		 */
-		jit_tgt_setup_call(ctx, cnt-1, &params[2]);
+		jit_tgt_setup_call(ctx, cnt-1, &params[2], 1);
 
 		/*
 		 *  0) mark all temps that are part of the function call
@@ -1867,7 +2016,7 @@ again:
 				 */
 				limited_choice = jit_regset_intersection(ctx->regs_caller_saved,
 				    jit_regset_invert(ctx->regs_call_arguments));
-				reg = allocate_temp_reg(ctx, bb, tmp, limited_choice, 0);
+				reg = allocate_temp_reg(ctx, bb, tmp, limited_choice, 0, opc_idx);
 				if ((ts->loc == JITLOC_CONST) && 0 /*tgt_has_str_imm*/) {
 					/* XXX */
 					continue;
@@ -1965,7 +2114,7 @@ again:
 
 				tmp = _jit_new_tmp(ctx, 0, 1, 1);
 				restricted_choice = jit_regset_intersection(current_choice, limited_choice);
-				reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0);
+				reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0, opc_idx);
 
 				tparams2[0] = reg;
 				tparams2[1] = params[idx];
@@ -1992,7 +2141,7 @@ again:
 				/*
 				 * If the temp is in memory, pick a register and fill.
 				 */
-				reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0);
+				reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0, opc_idx);
 
 				fill_temp(ctx, tmp, reg);
 
@@ -2011,7 +2160,7 @@ again:
 					printf("restricted_choice: %"PRIx64", ts->reg: %d\n", restricted_choice, ts->reg);
 					old_reg = ts->reg;
 
-					reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0);
+					reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0, opc_idx);
 
 					tparams2[0] = reg;
 					tparams2[1] = old_reg;
@@ -2046,7 +2195,7 @@ again:
 			jit_regset_full(limited_choice);
 			restricted_choice = jit_regset_intersection(current_choice, limited_choice);
 			tmp = _jit_new_tmp(ctx, 0, 0, 1);
-			reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0);
+			reg = allocate_temp_reg(ctx, bb, tmp, restricted_choice, 0, opc_idx);
 			tparams[idx] = reg;
 			jit_regset_clear(current_choice, reg);
 		}
@@ -2102,7 +2251,7 @@ again:
 				 */
 				if (!tmp_is_relatively_dead(ctx, bb, tmp1, ts1->out_scan.generation)) {
 					/* allocate something from current_choice */
-					reg_move = allocate_temp_reg(ctx, bb, tmp1, current_choice, CAN_FAIL);
+					reg_move = allocate_temp_reg(ctx, bb, tmp1, current_choice, CAN_FAIL, opc_idx);
 
 				}
 
@@ -2133,7 +2282,7 @@ again:
 			 */
 
 			/* XXX: implement simple hinting for the non-aliased case at least */
-			reg = allocate_temp_reg(ctx, bb, tmp, current_choice, 0);
+			reg = allocate_temp_reg(ctx, bb, tmp, current_choice, 0, opc_idx);
 			tparams[idx] = reg;
 			jit_regset_clear(current_choice, ts->reg);
 		}
@@ -2150,6 +2299,119 @@ again:
 	 */
 	opc = JITOP(op, dw, op_dw);
 	jit_tgt_emit(ctx, opc, tparams);
+}
+
+
+static
+void
+bb_propagate_hints(jit_ctx_t ctx, jit_bb_t bb) {
+	jit_tgt_op_def_t tgt_def;
+	const char *fmt;
+	int opc_idx = 0;
+	int opparam_idx = (bb->param_ptr - bb->params);
+	int cnt;
+	int i;
+	int dead;
+	uint32_t opc;
+	jit_op_def_t def;
+	jit_tmp_t tmp, tmp_alias;
+	jit_tmp_state_t ts, ts_alias;
+	int reg;
+
+	jit_regset_empty(bb->regs_hinted);
+
+	for (opc_idx = bb->opc_cnt-1; opc_idx >= 0; opc_idx--) {
+		opc = bb->opcodes[opc_idx];
+		def = &op_def[JITOP_OP(opc)];
+		fmt = def->fmt;
+
+		cnt = def->in_args + def->out_args;
+		if (def->in_args < 0 || def->out_args < 0) {
+			cnt = bb->params[opparam_idx-1]+2;
+		}
+
+		opparam_idx -= cnt;
+
+		switch (JITOP_OP(opc)) {
+		case JITOP_FN_PROLOGUE:
+		case JITOP_NOPN:
+		case JITOP_NOP1:
+		case JITOP_NOP:
+			break;
+
+		case JITOP_CALL:
+			/*
+			 * [0]: cnt
+			 * [1]: fn_ptr
+			 * [2]: output temp
+			 * [3..cnt-3]: input temps
+			 */
+			jit_tgt_setup_call(ctx, cnt-3, &bb->params[opparam_idx+2], 1);
+
+			for (i = 3; i < cnt-1; i++) {
+				tmp = bb->params[opparam_idx+i];
+				ts = GET_TMP_STATE(ctx, tmp);
+
+				if (ts->call_info.loc != JITLOC_REG)
+					continue;
+
+				jit_regset_set(bb->regs_hinted, ts->call_info.reg);
+
+				tmp_add_hint(ctx, bb, tmp, opc_idx, ts->call_info.reg);
+				printf("@@attach hint: %c%d (bb->id=%d, opc_idx=%d)\n", ts->local ? 'l' : 't', ts->id, bb->id, opc_idx);
+			}
+			break;
+
+		default:
+			tgt_def = &tgt_op_def[JITOP_OP(opc)];
+
+			for (i = 0; i < def->out_args; i++) {
+				if (strlen(tgt_def->o_restrict) <= i)
+					break;
+
+				tmp = bb->params[opparam_idx+i];
+				ts = GET_TMP_STATE(ctx, tmp);
+			}
+
+			for (i = 0; i < def->out_args; i++) {
+				if (strlen(tgt_def->alias) <= i)
+					break;
+
+				tmp = bb->params[opparam_idx+i];
+				ts = GET_TMP_STATE(ctx, tmp);
+
+				printf("@@no hint?: %c%d (bb->id=%d, opc_idx=%d)\n", ts->local ? 'l' : 't', ts->id, bb->id, opc_idx);
+				if (!tmp_get_hint(ctx, bb, tmp, opc_idx, &reg))
+					continue;
+
+				tmp_alias = bb->params[opparam_idx +
+				    def->out_args+(tgt_def->alias[i]-'0')];
+
+				printf("@@ propagating hint\n");
+				tmp_add_hint(ctx, bb, tmp_alias, opc_idx, reg);
+			}
+
+			for (i = 0; i < def->in_args; i++) {
+				if (strlen(tgt_def->i_restrict) <= i)
+					break;
+
+				if (fmt[i] == 'r') {
+					tmp = bb->params[opparam_idx+def->out_args+i];
+					ts = GET_TMP_STATE(ctx, tmp);
+
+					if (tgt_def->i_restrict[i] != '-') {
+						/*
+						 * XXX: if only one register set in the
+						 *      restricted set, pick that one.
+						 *      Otherwise, pick a random one?
+						 */
+					}
+				}
+			}
+
+			break;
+		}
+	}
 }
 
 
@@ -2395,6 +2657,7 @@ jit_optimize(jit_ctx_t ctx)
 	for (i = 0; i < ctx->block_cnt; i++) {
 		zero_scan(ctx);
 		bb_remove_dead(ctx, &ctx->blocks[i]);
+		bb_propagate_hints(ctx, &ctx->blocks[i]);
 	}
 
 	/* XXX: rest of optimizations... */

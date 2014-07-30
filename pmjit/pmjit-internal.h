@@ -29,6 +29,14 @@ typedef struct jit_tmp_use {
 	TAILQ_ENTRY(jit_tmp_use)	link;
 } *jit_tmp_use_t;
 
+typedef struct jit_tmp_hint {
+	int			use_idx;
+	int			bb_id;
+
+	int			reg;
+
+	TAILQ_ENTRY(jit_tmp_hint)	link;
+} *jit_tmp_hint_t;
 
 typedef struct jit_tmp_scan {
 	/*
@@ -37,6 +45,7 @@ typedef struct jit_tmp_scan {
 	 */
 	int		generation;
 	TAILQ_HEAD(, jit_tmp_use)	use_list;
+	TAILQ_HEAD(, jit_tmp_hint)	hint_list;
 
 	/* Use metrics */
 	int		use_count;
@@ -103,6 +112,8 @@ typedef struct jit_bb
 
 	struct jit_bb_links in_links;
 	struct jit_bb_links out_links;
+
+	jit_regset_t	regs_hinted;
 
 	/* XXX: fill these out... */
 	int		tmp_idx_1st;

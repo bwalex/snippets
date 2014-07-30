@@ -27,7 +27,7 @@ void jit_tgt_init(void);
 void jit_tgt_ctx_init(jit_ctx_t ctx);
 int jit_tgt_feature_check(jit_ctx_t ctx, jit_op_t op);
 
-void jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params);
+void jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params, int emit);
 void jit_tgt_emit_call(jit_ctx_t ctx, int cnt, uint64_t *params);
 
 void jit_tgt_emit_fn_prologue(jit_ctx_t ctx, int cnt, uint64_t *params);

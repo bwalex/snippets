@@ -1650,7 +1650,7 @@ jit_tgt_emit(jit_ctx_t ctx, uint32_t opc, uint64_t *params)
 }
 
 void
-jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params)
+jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params, int no_emit)
 {
 	jit_tmp_t tmp;
 	jit_tmp_state_t ts;
@@ -1691,7 +1691,7 @@ jit_tgt_setup_call(jit_ctx_t ctx, int cnt, uint64_t *params)
 		}
 	}
 
-	if (stack_disp > 0)
+	if (!no_emit && stack_disp > 0)
 		jit_emit_sub_reg_imm32(ctx->codebuf, 1, REG_RSP, stack_disp);
 }
 
