@@ -26,6 +26,8 @@
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
 */
+#define _BSD_SOURCE
+#define _GNU_SOURCE
 #include <sys/mman.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -33,6 +35,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -40,6 +43,14 @@
 #include "pmjit-internal.h"
 #include "pmjit-tgt.h"
 
+
+/*
+ * Split into:
+ *   pmjit-tmp.c
+ *   pmjit-label.c
+ *   pmjit-optim.c
+ *   pmjit-trace.c
+ */
 
 struct jit_op_def const op_def[] = {
 	[JITOP_AND]	= { .mnemonic = "and",     .side_effects = 0, .save_locals = SAVE_NORMAL, .out_args = 1, .in_args = 2, .fmt = "rr"    },
@@ -1767,6 +1778,285 @@ done:
 
 static
 void
+translate_call_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *params)
+{
+	jit_op_t op = JITOP_OP(opc);
+	int dw = JITOP_DW(opc);
+	int op_dw = JITOP_OP_DW(opc);
+	jit_op_def_t def = &op_def[op];
+	int i, idx;
+	int reg, old_reg;
+	int cnt;
+	int extra_regs = -1;
+	uint64_t tparams[16];
+	uint64_t tparams2[16];
+	jit_regset_t current_choice = ctx->overall_choice;
+	jit_regset_t restricted_choice, limited_choice;
+
+	jit_tmp_t tmp, tmp1;
+	jit_tmp_state_t ts, ts1;
+
+	cnt = params[0];
+
+	/*
+	 * Get the call info for all the temps; the output
+	 * temp is at [2], the other ones come after that.
+	 * [1] is the function pointer, [0] is the argument
+	 * count including the output register and the
+	 * function pointer.
+	 */
+	jit_tgt_setup_call(ctx, cnt-1, &params[2], 1);
+
+	/*
+	 *  0) mark all temps that are part of the function call
+	 *     arguments.
+	 */
+	for (idx = 3; idx <= cnt; idx++) {
+		tmp = params[idx];
+		ts = GET_TMP_STATE(ctx, tmp);
+		ts->out_scan.mark = 1;
+	}
+
+	/*
+	 *  1) find in-use caller saved regs that are not in use by
+	 *     actual arguments and spill those temps (and mark the
+	 *     register as unused).
+	 */
+	/*
+	 *  2) For any argument left in caller-saved registers, save
+	 *     the temp if necessary (in its normal save location) -
+	 *     i.e. if it is not dead after this op (but don't mark
+	 *     register unused).
+	 */
+
+	for (reg = 0; reg < 64; reg++) {
+		if (!jit_regset_test(ctx->regs_caller_saved, reg))
+			continue;
+		if (!jit_regset_test(ctx->regs_used, reg))
+			continue;
+
+		tmp = ctx->reg_to_tmp[reg];
+		ts = GET_TMP_STATE(ctx, tmp);
+		if (ts->out_scan.mark) {
+			if (!tmp_is_relatively_dead(ctx, bb, tmp, ts->out_scan.generation) ||
+			    ts->local)
+				save_temp(ctx, tmp);
+		} else {
+			spill_temp(ctx, tmp);
+		}
+	}
+
+	/*
+	 *  3) go through temps that are still in registers, and write
+	 *     them to the stack argument location if they are supposed
+	 *     to go onto the stack (and mark the register as unused).
+	 */
+	for (reg = 0; reg < 64; reg++) {
+		if (!jit_regset_test(ctx->regs_used, reg))
+			continue;
+
+		tmp = ctx->reg_to_tmp[reg];
+		ts = GET_TMP_STATE(ctx, tmp);
+
+		if (ts->out_scan.mark && ts->call_info.loc == JITLOC_STACK) {
+			tparams2[0] = reg;
+			tparams2[1] = ts->call_info.mem_base_reg;
+			tparams2[2] = ts->call_info.mem_offset;
+
+			jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
+			    tparams2);
+
+			jit_regset_clear(ctx->regs_used, ts->reg);
+
+			ts->out_scan.mark = 0;
+		}
+	}
+	/*
+	 *  4) go through temps in argument registers (which must all
+	 *     be arguments by now) and move them into the right register
+	 *     if they aren't yet.
+	 *     If the right register is in use, try to move the temp in
+	 *     that register to its right register. If that's not possible
+	 *     (because that destination is also in use), exchange
+	 *     registers (either via xchg if the target supports it, or via
+	 *     the stack).
+	 */
+	for (reg = 0; reg < 64; reg++) {
+		if (!jit_regset_test(ctx->regs_used, reg))
+			continue;
+
+again:
+		tmp = ctx->reg_to_tmp[reg];
+		ts = GET_TMP_STATE(ctx, tmp);
+
+		/* If not a function argument, forget about it */
+		if (!ts->out_scan.mark)
+			continue;
+
+		/*
+		 * Any argument left in registers must be a register argument
+		 * at this point.
+		 */
+		assert (ts->call_info.loc == JITLOC_REG);
+
+		if (jit_regset_test(ctx->regs_used, ts->call_info.reg)) {
+			tmp1 = ctx->reg_to_tmp[ts->call_info.reg];
+			ts1 = GET_TMP_STATE(ctx, tmp1);
+
+			/*
+			 * If the target register is in use, it must be
+			 * in use by an argument - otherwise it would've
+			 * been spilled by now.
+			 */
+			assert (ts1->out_scan.mark);
+		}
+
+		if (reg == ts->call_info.reg)
+			continue;
+
+		ts->reg = ts->call_info.reg;
+		ctx->reg_to_tmp[ts->call_info.reg] = tmp;
+		ts->out_scan.mark = 0;
+
+		if (!jit_regset_test(ctx->regs_used, ts->call_info.reg)) {
+			/*
+			 * If the target register is currently empty,
+			 * just mov into it.
+			 */
+			tparams2[0] = ts->call_info.reg;
+			tparams2[1] = reg;
+			jit_tgt_emit(ctx, JITOP(JITOP_MOV,
+			    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
+
+			jit_regset_clear(ctx->regs_used, reg);
+			jit_regset_set(ctx->regs_used, ts->call_info.reg);
+		} else if (jit_tgt_have_xchg && jit_tgt_prefer_xchg) {
+			/*
+			 * Issuing a series of xchgs can be quite
+			 * efficient on an out-of-order machine, where
+			 * they just affect register renaming.
+			 *
+			 * If the target platform prefers xchgs, just
+			 * swap things around until everything's in place.
+			 */
+			tparams2[0] = ts->call_info.reg;
+			tparams2[1] = reg;
+			jit_tgt_emit(ctx, JITOP(JITOP_XCHG,
+			    (ts->w64 || ts1->w64) ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64),
+			    tparams2);
+
+			ts1->reg = reg;
+			ctx->reg_to_tmp[reg] = tmp1;
+
+			goto again;
+		} else {
+			/*
+			 * If the target architecture doesn't want us to
+			 * use xchgs, just spill the target register and
+			 * mov into it.
+			 */
+			spill_temp(ctx, tmp1);
+
+			tparams2[0] = ts->call_info.reg;
+			tparams2[1] = reg;
+			jit_tgt_emit(ctx, JITOP(JITOP_MOV,
+			    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
+
+			jit_regset_clear(ctx->regs_used, reg);
+		}
+	}
+
+	/*
+	 *  5) Go through function argument temps that are currently
+	 *     spilled to memory, and emit either a ldr or a ldr +
+	 *     str, depending on whether they go into an argument
+	 *     register or the stack.
+	 */
+	for (idx = 3; idx <= cnt; idx++) {
+		tmp = params[idx];
+		ts = GET_TMP_STATE(ctx, tmp);
+
+		/*
+		 * If the temp is already in it's place, the out scan mark
+		 * would've been cleared by now - so skip these.
+		 */
+		if (!ts->out_scan.mark)
+			continue;
+
+		ts->out_scan.mark = 0;
+
+		if (ts->call_info.loc == JITLOC_REG) {
+			if (ts->loc == JITLOC_CONST) {
+				tparams2[0] = ts->call_info.reg;
+				tparams2[1] = ts->value;
+
+				jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
+				    tparams2);
+			} else if (ts->loc == JITLOC_STACK) {
+				tparams2[0] = ts->call_info.reg;
+				tparams2[1] = ts->mem_base_reg;
+				tparams2[2] = ts->mem_offset;
+
+				jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
+				    tparams2);
+			}
+		} else {
+			/*
+			 * XXX: no reason we use regs_caller_saved as base - might as well
+			 *      use all available regs (- argument regs) and rely on it
+			 *      picking free registers first.
+			 */
+			limited_choice = jit_regset_intersection(ctx->regs_caller_saved,
+			    jit_regset_invert(ctx->regs_call_arguments));
+			reg = allocate_temp_reg(ctx, bb, tmp, limited_choice, 0, opc_idx);
+			if ((ts->loc == JITLOC_CONST) && 0 /*tgt_has_str_imm*/) {
+				/* XXX */
+				continue;
+			} else if (ts->loc == JITLOC_CONST) {
+				tparams2[0] = reg;
+				tparams2[1] = ts->value;
+
+				jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
+				    tparams2);
+			} else if (ts->loc == JITLOC_STACK) {
+				tparams2[0] = reg;
+				tparams2[1] = ts->mem_base_reg;
+				tparams2[2] = ts->mem_offset;
+
+				jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
+				    tparams2);
+			}
+
+			tparams2[0] = reg;
+			tparams2[1] = ts->call_info.mem_base_reg;
+			tparams2[2] = ts->call_info.mem_offset;
+
+			jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
+			    tparams2);
+
+			/* Mark the register as unused again */
+			jit_regset_clear(ctx->regs_used, reg);
+		}
+	}
+
+	/* Set up output */
+	tmp = params[2];
+	ts = GET_TMP_STATE(ctx, tmp);
+
+	ts->loc = JITLOC_REG;
+	ts->reg = ts->call_info.reg;
+	ts->dirty = 1;
+	ctx->reg_to_tmp[ts->reg] = tmp;
+	jit_regset_set(ctx->regs_used, ts->reg);
+	jit_regset_set(ctx->regs_ever_used, ts->reg);
+
+	jit_tgt_emit_call(ctx, cnt, &params[1]);
+
+	return;
+}
+
+static
+void
 translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *params)
 {
 	jit_op_t op = JITOP_OP(opc);
@@ -1804,262 +2094,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 	expire_regs(ctx, bb);
 
 	if (op == JITOP_CALL) {
-		cnt = params[0];
-
-		/*
-		 * Get the call info for all the temps; the output
-		 * temp is at [2], the other ones come after that.
-		 * [1] is the function pointer, [0] is the argument
-		 * count including the output register and the
-		 * function pointer.
-		 */
-		jit_tgt_setup_call(ctx, cnt-1, &params[2], 1);
-
-		/*
-		 *  0) mark all temps that are part of the function call
-		 *     arguments.
-		 */
-		for (idx = 3; idx <= cnt; idx++) {
-			tmp = params[idx];
-			ts = GET_TMP_STATE(ctx, tmp);
-			ts->out_scan.mark = 1;
-		}
-
-		/*
-		 *  1) find in-use caller saved regs that are not in use by
-		 *     actual arguments and spill those temps (and mark the
-		 *     register as unused).
-		 */
-		/*
-		 *  2) For any argument left in caller-saved registers, save
-		 *     the temp if necessary (in its normal save location) -
-		 *     i.e. if it is not dead after this op (but don't mark
-		 *     register unused).
-		 */
-
-		for (reg = 0; reg < 64; reg++) {
-			if (!jit_regset_test(ctx->regs_caller_saved, reg))
-				continue;
-			if (!jit_regset_test(ctx->regs_used, reg))
-				continue;
-
-			tmp = ctx->reg_to_tmp[reg];
-			ts = GET_TMP_STATE(ctx, tmp);
-			if (ts->out_scan.mark) {
-				if (!tmp_is_relatively_dead(ctx, bb, tmp, ts->out_scan.generation) ||
-				    ts->local)
-					save_temp(ctx, tmp);
-			} else {
-				spill_temp(ctx, tmp);
-			}
-		}
-
-		/*
-		 *  3) go through temps that are still in registers, and write
-		 *     them to the stack argument location if they are supposed
-		 *     to go onto the stack (and mark the register as unused).
-		 */
-		for (reg = 0; reg < 64; reg++) {
-			if (!jit_regset_test(ctx->regs_used, reg))
-				continue;
-
-			tmp = ctx->reg_to_tmp[reg];
-			ts = GET_TMP_STATE(ctx, tmp);
-
-			if (ts->out_scan.mark && ts->call_info.loc == JITLOC_STACK) {
-				tparams2[0] = reg;
-				tparams2[1] = ts->call_info.mem_base_reg;
-				tparams2[2] = ts->call_info.mem_offset;
-
-				jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
-
-				jit_regset_clear(ctx->regs_used, ts->reg);
-
-				ts->out_scan.mark = 0;
-			}
-		}
-		/*
-		 *  4) go through temps in argument registers (which must all
-		 *     be arguments by now) and move them into the right register
-		 *     if they aren't yet.
-		 *     If the right register is in use, try to move the temp in
-		 *     that register to its right register. If that's not possible
-		 *     (because that destination is also in use), exchange
-		 *     registers (either via xchg if the target supports it, or via
-		 *     the stack).
-		 */
-		for (reg = 0; reg < 64; reg++) {
-			if (!jit_regset_test(ctx->regs_used, reg))
-				continue;
-
-again:
-			tmp = ctx->reg_to_tmp[reg];
-			ts = GET_TMP_STATE(ctx, tmp);
-
-			/* If not a function argument, forget about it */
-			if (!ts->out_scan.mark)
-				continue;
-
-			/*
-			 * Any argument left in registers must be a register argument
-			 * at this point.
-			 */
-			assert (ts->call_info.loc == JITLOC_REG);
-
-			if (jit_regset_test(ctx->regs_used, ts->call_info.reg)) {
-				tmp1 = ctx->reg_to_tmp[ts->call_info.reg];
-				ts1 = GET_TMP_STATE(ctx, tmp1);
-
-				/*
-				 * If the target register is in use, it must be
-				 * in use by an argument - otherwise it would've
-				 * been spilled by now.
-				 */
-				assert (ts1->out_scan.mark);
-			}
-
-			if (reg == ts->call_info.reg)
-				continue;
-
-			ts->reg = ts->call_info.reg;
-			ctx->reg_to_tmp[ts->call_info.reg] = tmp;
-			ts->out_scan.mark = 0;
-
-			if (!jit_regset_test(ctx->regs_used, ts->call_info.reg)) {
-				/*
-				 * If the target register is currently empty,
-				 * just mov into it.
-				 */
-				tparams2[0] = ts->call_info.reg;
-				tparams2[1] = reg;
-				jit_tgt_emit(ctx, JITOP(JITOP_MOV,
-				    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
-
-				jit_regset_clear(ctx->regs_used, reg);
-				jit_regset_set(ctx->regs_used, ts->call_info.reg);
-			} else if (jit_tgt_have_xchg && jit_tgt_prefer_xchg) {
-				/*
-				 * Issuing a series of xchgs can be quite
-				 * efficient on an out-of-order machine, where
-				 * they just affect register renaming.
-				 *
-				 * If the target platform prefers xchgs, just
-				 * swap things around until everything's in place.
-				 */
-				tparams2[0] = ts->call_info.reg;
-				tparams2[1] = reg;
-				jit_tgt_emit(ctx, JITOP(JITOP_XCHG,
-				    (ts->w64 || ts1->w64) ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64),
-				    tparams2);
-
-				ts1->reg = reg;
-				ctx->reg_to_tmp[reg] = tmp1;
-
-				goto again;
-			} else {
-				/*
-				 * If the target architecture doesn't want us to
-				 * use xchgs, just spill the target register and
-				 * mov into it.
-				 */
-				spill_temp(ctx, tmp1);
-
-				tparams2[0] = ts->call_info.reg;
-				tparams2[1] = reg;
-				jit_tgt_emit(ctx, JITOP(JITOP_MOV,
-				    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
-
-				jit_regset_clear(ctx->regs_used, reg);
-			}
-		}
-
-		/*
-		 *  5) Go through function argument temps that are currently
-		 *     spilled to memory, and emit either a ldr or a ldr +
-		 *     str, depending on whether they go into an argument
-		 *     register or the stack.
-		 */
-		for (idx = 3; idx <= cnt; idx++) {
-			tmp = params[idx];
-			ts = GET_TMP_STATE(ctx, tmp);
-
-			/*
-			 * If the temp is already in it's place, the out scan mark
-			 * would've been cleared by now - so skip these.
-			 */
-			if (!ts->out_scan.mark)
-				continue;
-
-			ts->out_scan.mark = 0;
-
-			if (ts->call_info.loc == JITLOC_REG) {
-				if (ts->loc == JITLOC_CONST) {
-					tparams2[0] = ts->call_info.reg;
-					tparams2[1] = ts->value;
-
-					jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
-					    tparams2);
-				} else if (ts->loc == JITLOC_STACK) {
-					tparams2[0] = ts->call_info.reg;
-					tparams2[1] = ts->mem_base_reg;
-					tparams2[2] = ts->mem_offset;
-
-					jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
-					    tparams2);
-				}
-			} else {
-				/*
-				 * XXX: no reason we use regs_caller_saved as base - might as well
-				 *      use all available regs (- argument regs) and rely on it
-				 *      picking free registers first.
-				 */
-				limited_choice = jit_regset_intersection(ctx->regs_caller_saved,
-				    jit_regset_invert(ctx->regs_call_arguments));
-				reg = allocate_temp_reg(ctx, bb, tmp, limited_choice, 0, opc_idx);
-				if ((ts->loc == JITLOC_CONST) && 0 /*tgt_has_str_imm*/) {
-					/* XXX */
-					continue;
-				} else if (ts->loc == JITLOC_CONST) {
-					tparams2[0] = reg;
-					tparams2[1] = ts->value;
-
-					jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
-					    tparams2);
-				} else if (ts->loc == JITLOC_STACK) {
-					tparams2[0] = reg;
-					tparams2[1] = ts->mem_base_reg;
-					tparams2[2] = ts->mem_offset;
-
-					jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
-					    tparams2);
-				}
-
-				tparams2[0] = reg;
-				tparams2[1] = ts->call_info.mem_base_reg;
-				tparams2[2] = ts->call_info.mem_offset;
-
-				jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
-
-				/* Mark the register as unused again */
-				jit_regset_clear(ctx->regs_used, reg);
-			}
-		}
-
-		/* Set up output */
-		tmp = params[2];
-		ts = GET_TMP_STATE(ctx, tmp);
-
-		ts->loc = JITLOC_REG;
-		ts->reg = ts->call_info.reg;
-		ts->dirty = 1;
-		ctx->reg_to_tmp[ts->reg] = tmp;
-		jit_regset_set(ctx->regs_used, ts->reg);
-		jit_regset_set(ctx->regs_ever_used, ts->reg);
-
-		jit_tgt_emit_call(ctx, cnt, &params[1]);
-
+		translate_call_insn(ctx, bb, opc_idx, opc, params);
 		return;
 	}
 
@@ -2316,6 +2351,7 @@ bb_propagate_hints(jit_ctx_t ctx, jit_bb_t bb) {
 	jit_op_def_t def;
 	jit_tmp_t tmp, tmp_alias;
 	jit_tmp_state_t ts, ts_alias;
+	jit_regset_t restricted_regs;
 	int reg;
 
 	jit_regset_empty(bb->regs_hinted);
@@ -2405,6 +2441,15 @@ bb_propagate_hints(jit_ctx_t ctx, jit_bb_t bb) {
 						 *      restricted set, pick that one.
 						 *      Otherwise, pick a random one?
 						 */
+						restricted_regs = jit_tgt_reg_restrict(ctx,
+						    JITOP_OP(opc), tgt_def->i_restrict[i]);
+						reg = ffsl((long)restricted_regs);
+
+						printf("@@attach hint: %c%d (bb->id=%d, opc_idx=%d)\n", ts->local ? 'l' : 't', ts->id, bb->id, opc_idx);
+
+						jit_regset_set(bb->regs_hinted, reg);
+
+						tmp_add_hint(ctx, bb, tmp, opc_idx, reg);
 					}
 				}
 			}
