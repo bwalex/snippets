@@ -117,6 +117,106 @@ struct jit_op_def const op_def[] = {
 	[JITOP_CALL] = { .mnemonic = "call", .side_effects = 1, .save_locals = SAVE_NORMAL, .out_args = -1, .in_args = -1, .fmt = "" }
 };
 
+
+enum trace_type {
+	TRACE_ALLOC,
+	TRACE_SAVE,
+	TRACE_SPILL,
+	TRACE_FILL,
+	TRACE_HINT,
+	TRACE_DEAD,
+	TRACE_GEN,
+	TRACE_REGS
+};
+/*
+ * TRACE_ALLOC:	trace register allocation
+ * TRACE_SAVE:	trace saving value to stack
+ * TRACE_SPILL:	trace spilling (irrespective of SAVE)
+ * TRACE_FILL:	trace filling from stack
+ * TRACE_HINT:	trace hint propagation, uses, conflicts
+ * TRACE_DEAD:	trace dead code elimination
+ * TRACE_GEN:	trace native code generation
+ * TRACE_REGS:	trace used registers after every bit of generated code
+ */
+#define _trace(typ, fmt, ...) \
+    pmjit_trace(ctx, TRACE_##typ, "[TRACE_" #typ "\t]: " fmt "\n", __VA_ARGS__)
+
+#define _trace_save(tmp)						\
+	do {								\
+		jit_tmp_state_t __ts = GET_TMP_STATE(ctx, tmp);		\
+		_trace(SAVE, "%s @ %c%#x(%%r%d)",			\
+		    tmp_name(ctx, tmp),					\
+		    (__ts->mem_offset < 0) ? '-' : ' ',			\
+		    (__ts->mem_offset < 0) ?				\
+		        (-__ts->mem_offset) :				\
+			(__ts->mem_offset),				\
+		    __ts->mem_base_reg);				\
+	} while (0)
+
+#define _trace_spill(tmp)						\
+	do {								\
+		jit_tmp_state_t __ts = GET_TMP_STATE(ctx, tmp);		\
+		_trace(SPILL, "%s (%%r%d)",				\
+		    tmp_name(ctx, tmp),					\
+		    __ts->reg);						\
+	} while (0)
+
+#define _trace_fill(tmp, reg)						\
+	do {								\
+		jit_tmp_state_t __ts = GET_TMP_STATE(ctx, tmp);		\
+		_trace(FILL, "%s @ %c%#x(%%r%d) -> %%r%d",		\
+		    tmp_name(ctx, tmp),					\
+		    (__ts->mem_offset < 0) ? '-' : ' ',			\
+		    (__ts->mem_offset < 0) ?				\
+		        (-__ts->mem_offset) :				\
+			(__ts->mem_offset),				\
+		    __ts->mem_base_reg,					\
+		    reg);						\
+	} while (0)
+
+#define _trace_alloc(tmp, reg)						\
+	do {								\
+		_trace(ALLOC, "%s -> %%r%d",				\
+		    tmp_name(ctx, tmp),					\
+		    reg);						\
+	} while (0)
+
+#define _trace_gen(line)						\
+	do {								\
+		_trace(GEN, "%s",					\
+		    line);						\
+	} while (0)
+
+
+static
+char *
+tmp_name(jit_ctx_t ctx, jit_tmp_t tmp)
+{
+	static char buf[32];
+
+	jit_tmp_state_t ts = GET_TMP_STATE(ctx, tmp);
+
+	sprintf(buf, "%c%d", JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
+
+	return buf;
+}
+
+void
+pmjit_tracev(jit_ctx_t ctx, int type, const char *fmt, va_list ap)
+{
+	vprintf(fmt, ap);
+}
+
+void
+pmjit_trace(jit_ctx_t ctx, int type, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	pmjit_tracev(ctx, type, fmt, ap);
+	va_end(ap);
+}
+
 static
 void
 tmp_state_ctor(void *priv, void *elem)
@@ -1323,6 +1423,181 @@ jit_emit_reti(jit_ctx_t ctx, uint64_t imm)
 }
 
 static
+char *
+sprint_op(jit_ctx_t ctx, jit_bb_t bb, int opc, uint64_t *params)
+{
+	static char str[1024];
+
+	jit_op_t op;
+	int opc_idx;
+	int param_idx = 0;
+	uint64_t param;
+	int iidx;
+	int oidx;
+	int dw;
+	int op_dw;
+	uint64_t imm;
+	jit_label_t label;
+	jit_tmp_t tmp;
+	jit_tmp_state_t ts;
+	jit_cc_t cc;
+	int arg_cnt;
+	jit_op_def_t def;
+
+	op = JITOP_OP(opc);
+	dw = JITOP_DW(opc);
+	op_dw = JITOP_OP_DW(opc);
+
+	switch (op) {
+	case JITOP_LDRI:
+		break;
+	case JITOP_LDRR:
+		break;
+	case JITOP_LDRBPO:
+		break;
+	case JITOP_LDRBPSI:
+		break;
+
+	case JITOP_STRI:
+		break;
+	case JITOP_STRR:
+		break;
+	case JITOP_STRBPO:
+		break;
+	case JITOP_STRBPSI:
+		break;
+
+	case JITOP_NOP:
+		break;
+
+	case JITOP_NOP1:
+		param_idx += 1;
+		break;
+
+	case JITOP_NOPN:
+		arg_cnt = params[param_idx];
+		param_idx += 2 + arg_cnt;
+		break;
+
+	case JITOP_FN_PROLOGUE:
+		sprintf(str, "function(");
+		arg_cnt = params[param_idx];
+		++param_idx;
+		for (; arg_cnt > 0; arg_cnt--) {
+			tmp = (jit_tmp_t)params[param_idx];
+			ts = GET_TMP_STATE(ctx, tmp);
+			sprintf(str, "%s%c%d", str, JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
+			if (arg_cnt > 1)
+				sprintf(str, "%s, ", str);
+			++param_idx;
+		}
+		++param_idx;
+		sprintf(str, "%s)", str);
+		break;
+
+	case JITOP_CALL:
+		arg_cnt = params[param_idx]-2;
+		++param_idx;
+		tmp = (jit_tmp_t)params[param_idx+1];
+		ts = GET_TMP_STATE(ctx, tmp);
+		sprintf(str, "\tcall\t\t%p\t%c%d", (void *)params[param_idx], JIT_TMP_IS_LOCAL(tmp) ? 'l':'t', ts->id);
+		param_idx += 2;
+		for (; arg_cnt > 0; arg_cnt--) {
+			sprintf(str, "%s, ", str);
+			tmp = (jit_tmp_t)params[param_idx];
+			ts = GET_TMP_STATE(ctx, tmp);
+			if (ts->loc == JITLOC_CONST) {
+				if (ts->w64)
+					sprintf(str, "%s%"PRId64,str,  ts->value);
+				else
+					sprintf(str, "%s%d", str, (int32_t)ts->value);
+			} else {
+				sprintf(str, "%s%c%d", str, JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
+			}
+			++param_idx;
+		}
+		++param_idx;
+		break;
+
+	case JITOP_SET_LABEL:
+		label = (jit_label_t)params[param_idx];
+		++param_idx;
+		sprintf(str, "label%d:", label->id);
+		break;
+
+	default:
+		def = &op_def[op];
+		sprintf(str, "\t%s.%-10s", def->mnemonic, (dw == JITOP_DW_8 ) ? "8"  :
+						    (dw == JITOP_DW_16) ? "16" :
+						    (dw == JITOP_DW_32) ? "32" : "64");
+		if (def->out_args > 0) {
+			sprintf(str, "%s\t", str);
+			for (oidx = 0; oidx < def->out_args; oidx++) {
+				tmp = params[param_idx];
+				ts = GET_TMP_STATE(ctx, tmp);
+				sprintf(str, "%s%c%d", str, JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
+				++param_idx;
+
+				if (oidx != def->out_args-1) {
+					sprintf(str, "%s, ", str);
+				}
+			}
+		}
+		if (def->in_args > 0) {
+			if (def->out_args == 0)
+				sprintf(str, "%s\t", str);
+			for (iidx = 0; iidx < def->in_args; iidx++) {
+				if (def->out_args != 0 || iidx > 0) {
+					sprintf(str, "%s, ", str);
+				}
+
+				switch (def->fmt[iidx]) {
+				case 'r':
+					tmp = (jit_tmp_t)params[param_idx];
+					ts = GET_TMP_STATE(ctx, tmp);
+					sprintf(str, "%s%c%d", str, JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
+					break;
+
+				case 'i':
+				case 'I':
+					imm = (uint64_t)params[param_idx];
+					if (dw == 64)
+						sprintf(str, "%s$%#lx", str, imm);
+					else
+						sprintf(str, "%s$%#x", str, (uint32_t)imm);
+					break;
+
+				case 'l':
+					label = (jit_label_t)params[param_idx];
+					sprintf(str, "%slabel%d", str, label->id);
+					break;
+
+				case 'c':
+					cc = (jit_cc_t)params[param_idx];
+					sprintf(str, "%s%s", str, (cc == CMP_GE) ? "ge" :
+						     (cc == CMP_LE) ? "le" :
+						     (cc == CMP_NE) ? "ne" :
+						     (cc == CMP_EQ) ? "eq" :
+						     (cc == CMP_GT) ? "gt" :
+						     (cc == CMP_LT) ? "lt" : "<unknown cc>");
+					sprintf(str, "%s.%s", str, (op_dw == JITOP_DW_8 ) ? "8"  :
+						      (op_dw == JITOP_DW_16) ? "16" :
+						      (op_dw == JITOP_DW_32) ? "32" : "64");
+					break;
+				case 'C':
+					sprintf(str, "%s<tst>", str);
+					break;
+				}
+				++param_idx;
+			}
+
+		}
+	}
+
+	return str;
+}
+
+static
 void
 jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 {
@@ -1347,28 +1622,8 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 		dw = JITOP_DW(bb->opcodes[opc_idx]);
 		op_dw = JITOP_OP_DW(bb->opcodes[opc_idx]);
 
+		printf("%s\n", sprint_op(ctx, bb, bb->opcodes[opc_idx], &bb->params[param_idx]));
 		switch (op) {
-		case JITOP_LDRI:
-			break;
-		case JITOP_LDRR:
-			break;
-		case JITOP_LDRBPO:
-			break;
-		case JITOP_LDRBPSI:
-			break;
-
-		case JITOP_STRI:
-			break;
-		case JITOP_STRR:
-			break;
-		case JITOP_STRBPO:
-			break;
-		case JITOP_STRBPSI:
-			break;
-
-		case JITOP_NOP:
-			break;
-
 		case JITOP_NOP1:
 			param_idx += 1;
 			break;
@@ -1379,120 +1634,33 @@ jit_print_bb(jit_ctx_t ctx, jit_bb_t bb)
 			break;
 
 		case JITOP_FN_PROLOGUE:
-			printf("function(");
 			arg_cnt = bb->params[param_idx];
 			++param_idx;
 			for (; arg_cnt > 0; arg_cnt--) {
-				tmp = (jit_tmp_t)bb->params[param_idx];
-				ts = GET_TMP_STATE(ctx, tmp);
-				printf("%c%d", JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
-				if (arg_cnt > 1)
-					printf(", ");
 				++param_idx;
 			}
 			++param_idx;
-			printf(") =\n");
 			break;
 
 		case JITOP_CALL:
 			arg_cnt = bb->params[param_idx]-2;
 			++param_idx;
-			tmp = (jit_tmp_t)bb->params[param_idx+1];
-			ts = GET_TMP_STATE(ctx, tmp);
-			printf("\tcall\t%p\t%c%d", (void *)bb->params[param_idx], JIT_TMP_IS_LOCAL(tmp) ? 'l':'t', ts->id);
 			param_idx += 2;
 			for (; arg_cnt > 0; arg_cnt--) {
-				printf(", ");
-				tmp = (jit_tmp_t)bb->params[param_idx];
-				ts = GET_TMP_STATE(ctx, tmp);
-				if (ts->loc == JITLOC_CONST) {
-					if (ts->w64)
-						printf("%"PRId64, ts->value);
-					else
-						printf("%d", (int32_t)ts->value);
-				} else {
-					printf("%c%d", JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
-				}
 				++param_idx;
 			}
 			++param_idx;
-			printf("\n");
 			break;
 
 		case JITOP_SET_LABEL:
-			label = (jit_label_t)bb->params[param_idx];
 			++param_idx;
-			printf("label%d:\n", label->id);
 			break;
 
 		default:
 			def = &op_def[op];
-			printf("\t%s.%-10s", def->mnemonic, (dw == JITOP_DW_8 ) ? "8"  :
-			                                    (dw == JITOP_DW_16) ? "16" :
-							    (dw == JITOP_DW_32) ? "32" : "64");
-			if (def->out_args > 0) {
-				printf("\t");
-				for (oidx = 0; oidx < def->out_args; oidx++) {
-					tmp = bb->params[param_idx];
-					ts = GET_TMP_STATE(ctx, tmp);
-					printf("%c%d", JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
-					++param_idx;
-
-					if (oidx != def->out_args-1) {
-						printf(", ");
-					}
-				}
-			}
-			if (def->in_args > 0) {
-				if (def->out_args == 0)
-					printf("\t");
-				for (iidx = 0; iidx < def->in_args; iidx++) {
-					if (def->out_args != 0 || iidx > 0) {
-						printf(", ");
-					}
-
-					switch (def->fmt[iidx]) {
-					case 'r':
-						tmp = (jit_tmp_t)bb->params[param_idx];
-						ts = GET_TMP_STATE(ctx, tmp);
-						printf("%c%d", JIT_TMP_IS_LOCAL(tmp) ? 'l' : 't', ts->id);
-						break;
-
-					case 'i':
-					case 'I':
-						imm = (uint64_t)bb->params[param_idx];
-						if (dw == 64)
-							printf("$%#lx", imm);
-						else
-							printf("$%#x", (uint32_t)imm);
-						break;
-
-					case 'l':
-						label = (jit_label_t)bb->params[param_idx];
-						printf("label%d", label->id);
-						break;
-
-					case 'c':
-						cc = (jit_cc_t)bb->params[param_idx];
-						printf("%s", (cc == CMP_GE) ? "ge" :
-						             (cc == CMP_LE) ? "le" :
-							     (cc == CMP_NE) ? "ne" :
-							     (cc == CMP_EQ) ? "eq" :
-							     (cc == CMP_GT) ? "gt" :
-							     (cc == CMP_LT) ? "lt" : "<unknown cc>");
-						printf(".%s", (op_dw == JITOP_DW_8 ) ? "8"  :
-			                                      (op_dw == JITOP_DW_16) ? "16" :
-							      (op_dw == JITOP_DW_32) ? "32" : "64");
-						break;
-					case 'C':
-						printf("<tst>");
-						break;
-					}
-					++param_idx;
-				}
-
-			}
-			printf("\n");
+			param_idx += def->out_args;
+			param_idx += def->in_args;
+			break;
 		}
 	}
 }
@@ -1530,12 +1698,15 @@ save_temp(jit_ctx_t ctx, jit_tmp_t tmp)
 	}
 
 	if (ts->dirty) {
+		_trace_save(tmp);
+
 		tparams[0] = ts->reg;
 		tparams[1] = ts->mem_base_reg;
 		tparams[2] = ts->mem_offset;
 
-		jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
-		    tparams);
+		if (!ctx->no_emit)
+			jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
+			    tparams);
 	}
 
 	ts->dirty = 0;
@@ -1553,6 +1724,8 @@ spill_temp(jit_ctx_t ctx, jit_tmp_t tmp)
 	assert (!ts->pinned);
 
 	save_temp(ctx, tmp);
+
+	_trace_spill(tmp);
 
 	ts->loc = JITLOC_STACK;
 	ts->dirty = 0;
@@ -1597,12 +1770,15 @@ fill_temp(jit_ctx_t ctx, jit_tmp_t tmp, int reg)
 	assert (!jit_regset_test(ctx->regs_used, reg));
 #endif
 
+	_trace_fill(tmp, reg);
+
 	tparams[0] = reg;
 	tparams[1] = ts->mem_base_reg;
 	tparams[2] = ts->mem_offset;
 
-	jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
-	    tparams);
+	if (!ctx->no_emit)
+		jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
+		    tparams);
 
 	ts->loc = JITLOC_REG;
 	ts->reg = reg;
@@ -1770,8 +1946,11 @@ done:
 
 	jit_regset_set(ctx->regs_used, reg);
 	ctx->reg_to_tmp[reg] = tmp_alloc;
+	REG_SET_USED(ctx, reg, tmp_alloc);
 
 	jit_regset_set(ctx->regs_ever_used, reg);
+
+	_trace_alloc(tmp_alloc, reg);
 
 	return reg;
 }
@@ -1815,6 +1994,8 @@ translate_call_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint6
 		tmp = params[idx];
 		ts = GET_TMP_STATE(ctx, tmp);
 		ts->out_scan.mark = 1;
+		if (ts->loc != JITLOC_CONST)
+			tmp_pop_use(ctx, tmp);
 	}
 
 	/*
@@ -1863,8 +2044,9 @@ translate_call_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint6
 			tparams2[1] = ts->call_info.mem_base_reg;
 			tparams2[2] = ts->call_info.mem_offset;
 
-			jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
-			    tparams2);
+			if (!ctx->no_emit)
+				jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
+				    tparams2);
 
 			jit_regset_clear(ctx->regs_used, ts->reg);
 
@@ -1916,6 +2098,7 @@ again:
 
 		ts->reg = ts->call_info.reg;
 		ctx->reg_to_tmp[ts->call_info.reg] = tmp;
+		_trace_alloc(tmp, ts->reg);
 		ts->out_scan.mark = 0;
 
 		if (!jit_regset_test(ctx->regs_used, ts->call_info.reg)) {
@@ -1925,8 +2108,9 @@ again:
 			 */
 			tparams2[0] = ts->call_info.reg;
 			tparams2[1] = reg;
-			jit_tgt_emit(ctx, JITOP(JITOP_MOV,
-			    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
+			if (!ctx->no_emit)
+				jit_tgt_emit(ctx, JITOP(JITOP_MOV,
+				    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
 
 			jit_regset_clear(ctx->regs_used, reg);
 			jit_regset_set(ctx->regs_used, ts->call_info.reg);
@@ -1939,11 +2123,14 @@ again:
 			 * If the target platform prefers xchgs, just
 			 * swap things around until everything's in place.
 			 */
+			_trace_alloc(tmp1, reg);
+
 			tparams2[0] = ts->call_info.reg;
 			tparams2[1] = reg;
-			jit_tgt_emit(ctx, JITOP(JITOP_XCHG,
-			    (ts->w64 || ts1->w64) ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64),
-			    tparams2);
+			if (!ctx->no_emit)
+				jit_tgt_emit(ctx, JITOP(JITOP_XCHG,
+				    (ts->w64 || ts1->w64) ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64),
+				    tparams2);
 
 			ts1->reg = reg;
 			ctx->reg_to_tmp[reg] = tmp1;
@@ -1959,8 +2146,9 @@ again:
 
 			tparams2[0] = ts->call_info.reg;
 			tparams2[1] = reg;
-			jit_tgt_emit(ctx, JITOP(JITOP_MOV,
-			    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
+			if (!ctx->no_emit)
+				jit_tgt_emit(ctx, JITOP(JITOP_MOV,
+				    ts->w64 ? JITOP_DW_64 : JITOP_DW_32, JITOP_DW_64), tparams2);
 
 			jit_regset_clear(ctx->regs_used, reg);
 		}
@@ -1990,15 +2178,17 @@ again:
 				tparams2[0] = ts->call_info.reg;
 				tparams2[1] = ts->value;
 
-				jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
+				if (!ctx->no_emit)
+					jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
+					    tparams2);
 			} else if (ts->loc == JITLOC_STACK) {
 				tparams2[0] = ts->call_info.reg;
 				tparams2[1] = ts->mem_base_reg;
 				tparams2[2] = ts->mem_offset;
 
-				jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
+				if (!ctx->no_emit)
+					jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
+					    tparams2);
 			}
 		} else {
 			/*
@@ -2016,23 +2206,26 @@ again:
 				tparams2[0] = reg;
 				tparams2[1] = ts->value;
 
-				jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
+				if (!ctx->no_emit)
+					jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
+					    tparams2);
 			} else if (ts->loc == JITLOC_STACK) {
 				tparams2[0] = reg;
 				tparams2[1] = ts->mem_base_reg;
 				tparams2[2] = ts->mem_offset;
 
-				jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
+				if (!ctx->no_emit)
+					jit_tgt_emit(ctx, JITOP(JITOP_LDRBPO, JITOP_DW_64, JITOP_DW_64),
+					    tparams2);
 			}
 
 			tparams2[0] = reg;
 			tparams2[1] = ts->call_info.mem_base_reg;
 			tparams2[2] = ts->call_info.mem_offset;
 
-			jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
-			    tparams2);
+			if (!ctx->no_emit)
+				jit_tgt_emit(ctx, JITOP(JITOP_STRBPO, JITOP_DW_64, JITOP_DW_64),
+				    tparams2);
 
 			/* Mark the register as unused again */
 			jit_regset_clear(ctx->regs_used, reg);
@@ -2046,11 +2239,15 @@ again:
 	ts->loc = JITLOC_REG;
 	ts->reg = ts->call_info.reg;
 	ts->dirty = 1;
+
+	_trace_alloc(tmp, ts->reg);
+
 	ctx->reg_to_tmp[ts->reg] = tmp;
 	jit_regset_set(ctx->regs_used, ts->reg);
 	jit_regset_set(ctx->regs_ever_used, ts->reg);
 
-	jit_tgt_emit_call(ctx, cnt, &params[1]);
+	if (!ctx->no_emit)
+		jit_tgt_emit_call(ctx, cnt, &params[1]);
 
 	return;
 }
@@ -2082,7 +2279,7 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 		 * so we handle it separately.
 		 */
 		cnt = params[0];
-		jit_tgt_emit_fn_prologue(ctx, cnt, &params[1]);
+		jit_tgt_emit_fn_prologue(ctx, cnt, &params[1]); /* XXX: no_emit? */
 		return;
 	} else if (op == JITOP_NOP || op == JITOP_NOPN || op == JITOP_NOP1) {
 		return;
@@ -2153,8 +2350,9 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 
 				tparams2[0] = reg;
 				tparams2[1] = params[idx];
-				jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
-				    tparams2);
+				if (!ctx->no_emit)
+					jit_tgt_emit(ctx, JITOP(JITOP_MOVI, JITOP_DW_64, JITOP_DW_64),
+					    tparams2);
 				tparams[idx] = reg;
 
 				jit_regset_clear(current_choice, reg);
@@ -2199,8 +2397,9 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 
 					tparams2[0] = reg;
 					tparams2[1] = old_reg;
-					jit_tgt_emit(ctx, JITOP(JITOP_MOV, ts->w64 ? JITOP_DW_64 : JITOP_DW_32,
-								JITOP_DW_64), tparams2);
+					if (!ctx->no_emit)
+						jit_tgt_emit(ctx, JITOP(JITOP_MOV, ts->w64 ? JITOP_DW_64 : JITOP_DW_32,
+									JITOP_DW_64), tparams2);
 
 					/* XXX: eventually implement xchg logic to avoid spill */
 
@@ -2287,14 +2486,14 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 				if (!tmp_is_relatively_dead(ctx, bb, tmp1, ts1->out_scan.generation)) {
 					/* allocate something from current_choice */
 					reg_move = allocate_temp_reg(ctx, bb, tmp1, current_choice, CAN_FAIL, opc_idx);
-
 				}
 
 				if (reg_move >= 0) {
 					tparams2[0] = reg_move;
 					tparams2[1] = ts1->reg;
-					jit_tgt_emit(ctx, JITOP(JITOP_MOV, ts1->w64 ? JITOP_DW_64 : JITOP_DW_32,
-								JITOP_DW_64), tparams2);
+					if (!ctx->no_emit)
+						jit_tgt_emit(ctx, JITOP(JITOP_MOV, ts1->w64 ? JITOP_DW_64 : JITOP_DW_32,
+									JITOP_DW_64), tparams2);
 
 					ts1->reg = reg_move;
 				} else {
@@ -2308,6 +2507,9 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 				}
 			}
 
+			_trace_alloc(tmp, reg);
+
+			REG_SET_USED(ctx, reg, tmp);
 			ctx->reg_to_tmp[reg] = tmp;
 			jit_regset_set(ctx->regs_used, reg);
 		} else {
@@ -2333,7 +2535,8 @@ translate_insn(jit_ctx_t ctx, jit_bb_t bb, int opc_idx, uint32_t opc, uint64_t *
 	 * Emit actual operation, using the registers we just allocated.
 	 */
 	opc = JITOP(op, dw, op_dw);
-	jit_tgt_emit(ctx, opc, tparams);
+	if (!ctx->no_emit)
+		jit_tgt_emit(ctx, opc, tparams);
 }
 
 
@@ -2625,6 +2828,7 @@ process_bb(jit_ctx_t ctx, jit_bb_t bb) {
 		 *      is filled if needed)
 		 * 2) clear all currently allocated registers.
 		 */
+		_trace_gen(sprint_op(ctx, bb, opc, &bb->params[opparam_idx]));
 		translate_insn(ctx, bb, opc_idx, opc, &bb->params[opparam_idx]);
 
 		if (last && (def->save_locals == SAVE_NORMAL)) {

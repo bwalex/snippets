@@ -118,6 +118,16 @@ typedef struct jit_bb
 	/* XXX: fill these out... */
 	int		tmp_idx_1st;
 	int		tmp_idx_last;
+
+	/*
+	 * Keep track of reg-to-tmp mapping at
+	 * beginning of block and at end of block.
+	 */
+	jit_regset_t	regs_in;
+	jit_regset_t	regs_out;
+
+	int		reg_in_to_tmp[64];
+	int		reg_out_to_tmp[64];
 } *jit_bb_t;
 
 
@@ -138,6 +148,8 @@ struct jit_label {
 
 struct jit_ctx
 {
+	int		no_emit;
+
 	struct dyn_array	local_tmps;
 	struct dyn_array	bb_tmps;
 	struct dyn_array	labels;
